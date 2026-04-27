@@ -290,6 +290,22 @@ async function findReportForHtml(htmlName) {
 }
 
 /**
+ * Find report file matching candidate company name
+ */
+async function findReportForCandidate(company) {
+  try {
+    if (!company || !existsSync(REPORTS_DIR)) return null;
+    const files = await readdir(REPORTS_DIR);
+    // Convert company name to slug: lowercase, spaces/hyphens normalized
+    const slug = company.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+    const report = files.find(f => f.includes(`-${slug}-`) && f.endsWith('.md'));
+    return report ? resolve(REPORTS_DIR, report) : null;
+  } catch (error) {
+    return null;
+  }
+}
+
+/**
  * List available HTML files with metadata and associated files
  */
 async function listHtmlFiles() {
@@ -707,6 +723,121 @@ async function handleRequest(req, res) {
     return;
   }
 
+  // GET /api/queue — Load candidates from job_queue.jsonl (score >= 60)
+  if (req.method === 'GET' && pathname === '/api/queue') {
+    try {
+      const queuePath = resolve(BASE, 'data', 'job_queue.jsonl');
+      if (!existsSync(queuePath)) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Queue file not found' }));
+        return;
+      }
+
+      const queueContent = await readFile(queuePath, 'utf-8');
+      const candidates = queueContent
+        .split('\n')
+        .filter(line => line.trim())
+        .map(line => {
+          try {
+            return JSON.parse(line);
+          } catch {
+            return null;
+          }
+        })
+        .filter(c => c && c.score >= 60)
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 100); // Limit to first 100 for performance
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(candidates));
+    } catch (error) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: error.message }));
+    }
+    return;
+  }
+
+  // GET /api/candidate/:id — Get candidate details and existing report
+  if (req.method === 'GET' && pathname.startsWith('/api/candidate/')) {
+    try {
+      const candidateId = pathname.replace('/api/candidate/', '');
+      const queuePath = resolve(BASE, 'data', 'job_queue.jsonl');
+
+      if (!existsSync(queuePath)) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Queue file not found' }));
+        return;
+      }
+
+      const queueContent = await readFile(queuePath, 'utf-8');
+      let candidate = null;
+
+      for (const line of queueContent.split('\n')) {
+        if (!line.trim()) continue;
+        try {
+          const c = JSON.parse(line);
+          if (c.id === candidateId) {
+            candidate = c;
+            break;
+          }
+        } catch {
+          continue;
+        }
+      }
+
+      if (!candidate) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Candidate not found' }));
+        return;
+      }
+
+      // Try to find existing report
+      let reportContent = null;
+      const reportPath = await findReportForCandidate(candidate.company);
+      if (reportPath) {
+        reportContent = await readFile(reportPath, 'utf-8');
+      }
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ candidate, reportContent }));
+    } catch (error) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: error.message }));
+    }
+    return;
+  }
+
+  // POST /api/generate — Prepare candidate for evaluation (oferta → pdf workflow)
+  if (req.method === 'POST' && pathname === '/api/generate') {
+    let body = '';
+    req.on('data', chunk => { body += chunk.toString(); });
+    req.on('end', async () => {
+      try {
+        const { url, candidateId } = JSON.parse(body);
+        if (!url) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'URL required' }));
+          return;
+        }
+
+        // Return instructions for the client to switch to evaluate tab with this URL
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          success: true,
+          message: 'Ready for evaluation',
+          candidateId,
+          url,
+          action: 'switch-to-evaluate',
+          instruction: 'Switched to Evaluate tab with URL pre-filled. Select evaluation blocks and click Evaluate.'
+        }));
+      } catch (error) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: error.message }));
+      }
+    });
+    return;
+  }
+
   // 404
   res.writeHead(404, { 'Content-Type': 'text/plain' });
   res.end('Not found');
@@ -722,13 +853,13 @@ function buildIndexTemplate(files) {
       <td class="company-cell">${f.company}</td>
       <td class="time-cell">${f.mtimeStr}</td>
       <td class="report-cell">
-        ${f.hasReport ? `<a href="/api/report/${f.name}" target="_blank" class="btn-link">📋 Report</a>` : '<span class="empty">—</span>'}
-      </td>
-      <td class="pdf-cell">
-        ${f.hasPdf ? `<a href="/api/pdf/${f.name}" target="_blank" class="btn-link">📄 PDF</a>` : '<span class="empty">—</span>'}
+        ${f.hasReport ? `<a href="/view/${f.name}" class="btn-link">📋 Report</a>` : '<span class="empty">—</span>'}
       </td>
       <td class="cv-cell">
         <a href="/view/${f.name}" class="btn-link">✏️ Edit</a>
+      </td>
+      <td class="pdf-cell">
+        ${f.hasPdf ? `<a href="/api/pdf/${f.name}" target="_blank" class="btn-link">📄 PDF</a>` : '<span class="empty">—</span>'}
       </td>
       <td class="delete-cell">
         <button class="btn-delete" onclick="deleteCv('${f.name}', '${f.company}')" title="Remove">✕</button>
@@ -984,6 +1115,7 @@ function buildIndexTemplate(files) {
     <div class="tabs">
       <button class="tab-btn" onclick="switchTab('evaluate')">Evaluate JD</button>
       <button class="tab-btn active" onclick="switchTab('cvs')">Saved CVs</button>
+      <button class="tab-btn" onclick="switchTab('queue')">Queue</button>
     </div>
 
     <!-- Tab 1: Evaluate -->
@@ -1097,8 +1229,8 @@ function buildIndexTemplate(files) {
                 <th>Company</th>
                 <th>Created</th>
                 <th>Report</th>
-                <th>PDF</th>
                 <th>Edit</th>
+                <th>PDF</th>
                 <th>Action</th>
               </tr>
             </thead>
@@ -1109,16 +1241,54 @@ function buildIndexTemplate(files) {
         ` : '<p class="empty">No CVs found in output/html/</p>'}
       </div>
     </div>
+
+    <!-- Tab 3: Queue -->
+    <div id="queue" class="tab-content">
+      <div class="section">
+        <h2>Queue Processing</h2>
+        <p class="count">Candidates with score ≥ 60 from job_queue.jsonl</p>
+
+        <div style="margin-bottom: 16px;">
+          <input type="text" id="queueSearch" placeholder="Search by company or role..." style="width: 100%; padding: 10px; border: 1px solid var(--border-color); border-radius: 6px;">
+        </div>
+
+        <div id="queueList" style="display: grid; gap: 12px;">
+          <p class="empty">Loading queue...</p>
+        </div>
+      </div>
+
+      <div id="candidatePreview" style="display: none; margin-top: 30px;">
+        <div class="section">
+          <h2>📋 Candidate Preview</h2>
+          <div style="background: var(--bg-secondary); padding: 16px; border-radius: 6px; margin-bottom: 16px;">
+            <div style="margin-bottom: 12px;">
+              <div style="font-size: 14px; font-weight: 600; color: var(--text-primary);">
+                <span id="previewCompany"></span> — <span id="previewRole"></span>
+              </div>
+              <div style="font-size: 12px; color: var(--text-secondary); margin-top: 4px;">
+                Score: <span id="previewScore" style="font-weight: 600; color: var(--primary);"></span> / 100
+              </div>
+            </div>
+            <textarea id="previewDescription" readonly style="min-height: 150px; background: var(--bg-primary); resize: vertical;"></textarea>
+          </div>
+
+          <div id="previewReport" style="display: none;">
+            <h3 style="font-size: 13px; font-weight: 600; margin-bottom: 10px; color: var(--text-primary);">Existing Report</h3>
+            <div id="reportContent" style="max-height: 300px; overflow-y: auto; border: 1px solid var(--border-color); padding: 12px; border-radius: 6px; background: var(--bg-secondary); font-size: 12px; line-height: 1.5;">
+              <!-- Report content will be rendered here -->
+            </div>
+          </div>
+
+          <button id="generateBtn" onclick="generateForCandidate()" style="margin-top: 16px; background: var(--success);">
+            ⚙️ Generate (oferta → pdf)
+          </button>
+          <div id="generateStatus" class="status" style="margin-top: 12px;"></div>
+        </div>
+      </div>
+    </div>
   </div>
 
   <script>
-    function switchTab(tab) {
-      document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
-      document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
-      document.getElementById(tab).classList.add('active');
-      event.target.classList.add('active');
-    }
-
     function updateTokens() {
       const costs = { a: 500, b: 2500, c: 1500, d: 2000, e: 1000, f: 2500, g: 1500 };
       let total = 0;
@@ -1296,6 +1466,184 @@ function buildIndexTemplate(files) {
       } catch (error) {
         alert('Failed to delete: ' + error.message);
       }
+    }
+
+    // Queue functions
+    let queueCandidates = [];
+    let selectedCandidate = null;
+
+    function switchTab(tab) {
+      document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+      document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
+      document.getElementById(tab).classList.add('active');
+
+      // Find and activate the corresponding button by looking at onclick attribute
+      const buttons = document.querySelectorAll('.tab-btn');
+      for (const btn of buttons) {
+        if (btn.getAttribute('onclick') === \`switchTab('\${tab}')\`) {
+          btn.classList.add('active');
+          break;
+        }
+      }
+
+      // Load queue candidates when queue tab is activated
+      if (tab === 'queue') {
+        loadQueueCandidates();
+      }
+    }
+
+    async function loadQueueCandidates() {
+      try {
+        const response = await fetch('/api/queue');
+        if (!response.ok) throw new Error('Failed to load queue');
+
+        queueCandidates = await response.json();
+        renderQueueList(queueCandidates);
+      } catch (error) {
+        document.getElementById('queueList').innerHTML = \`<p class="empty">Error loading queue: \${error.message}</p>\`;
+      }
+    }
+
+    function renderQueueList(candidates) {
+      const list = document.getElementById('queueList');
+      if (!candidates || candidates.length === 0) {
+        list.innerHTML = '<p class="empty">No candidates found</p>';
+        return;
+      }
+
+      const html = candidates.map(c => \`
+        <div onclick="selectCandidate('\${c.id}')" style="
+          padding: 12px;
+          background: var(--bg-secondary);
+          border: 2px solid transparent;
+          border-radius: 6px;
+          cursor: pointer;
+          transition: all 0.2s;
+        " onmouseover="this.style.borderColor='var(--primary)'" onmouseout="this.style.borderColor='transparent'" class="queue-item" data-candidate-id="\${c.id}">
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <div>
+              <div style="font-weight: 600; color: var(--text-primary);">\${c.company}</div>
+              <div style="font-size: 12px; color: var(--text-secondary);">\${c.role}</div>
+            </div>
+            <div style="
+              background: var(--primary);
+              color: white;
+              padding: 4px 10px;
+              border-radius: 20px;
+              font-size: 12px;
+              font-weight: 600;
+            ">\${c.score}</div>
+          </div>
+        </div>
+      \`).join('');
+
+      list.innerHTML = html;
+    }
+
+    async function selectCandidate(candidateId) {
+      try {
+        const response = await fetch(\`/api/candidate/\${candidateId}\`);
+        if (!response.ok) throw new Error('Failed to load candidate');
+
+        const data = await response.json();
+        selectedCandidate = data.candidate;
+
+        // Update preview
+        document.getElementById('previewCompany').textContent = selectedCandidate.company;
+        document.getElementById('previewRole').textContent = selectedCandidate.role;
+        document.getElementById('previewScore').textContent = selectedCandidate.score;
+        document.getElementById('previewDescription').textContent = selectedCandidate.description || '(No description)';
+
+        // Show/hide report
+        if (data.reportContent) {
+          document.getElementById('previewReport').style.display = 'block';
+          document.getElementById('reportContent').innerHTML = markdownToHtml(data.reportContent);
+        } else {
+          document.getElementById('previewReport').style.display = 'none';
+        }
+
+        // Update selection styling
+        document.querySelectorAll('.queue-item').forEach(el => {
+          el.style.borderColor = 'transparent';
+          el.style.background = 'var(--bg-secondary)';
+        });
+        document.querySelector(\`[data-candidate-id="\${candidateId}"]\`).style.borderColor = 'var(--primary)';
+        document.querySelector(\`[data-candidate-id="\${candidateId}"]\`).style.background = 'rgba(37, 99, 235, 0.05)';
+
+        // Show preview
+        document.getElementById('candidatePreview').style.display = 'block';
+        document.getElementById('generateStatus').textContent = '';
+      } catch (error) {
+        alert('Error loading candidate: ' + error.message);
+      }
+    }
+
+    async function generateForCandidate() {
+      if (!selectedCandidate) {
+        alert('Please select a candidate first');
+        return;
+      }
+
+      const btn = document.getElementById('generateBtn');
+      btn.disabled = true;
+      btn.textContent = '⏳ Preparing...';
+
+      try {
+        const response = await fetch('/api/generate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            url: selectedCandidate.url,
+            candidateId: selectedCandidate.id
+          })
+        });
+
+        if (!response.ok) throw new Error('Generation failed');
+
+        const result = await response.json();
+
+        // Pre-fill the evaluate tab with the candidate URL
+        document.getElementById('jdInput').value = selectedCandidate.url;
+
+        // Show success message
+        const statusMsg = '✓ Switched to Evaluate tab. URL pre-filled: ' + selectedCandidate.company + ' — ' + selectedCandidate.role;
+        document.getElementById('generateStatus').innerHTML = statusMsg;
+        document.getElementById('generateStatus').className = 'status success';
+
+        // Switch to evaluate tab after a brief delay
+        setTimeout(() => {
+          switchTab('evaluate');
+        }, 500);
+      } catch (error) {
+        document.getElementById('generateStatus').innerHTML = '✗ ' + error.message;
+        document.getElementById('generateStatus').className = 'status error';
+      } finally {
+        btn.disabled = false;
+        btn.textContent = '⚙️ Generate (oferta → pdf)';
+      }
+    }
+
+    document.getElementById('queueSearch')?.addEventListener('input', (e) => {
+      const query = e.target.value.toLowerCase();
+      const filtered = queueCandidates.filter(c =>
+        c.company.toLowerCase().includes(query) || c.role.toLowerCase().includes(query)
+      );
+      renderQueueList(filtered);
+    });
+
+    function markdownToHtml(md) {
+      let html = md
+        .replace(/^### (.+)$/gm, '<h3 style="margin-top: 12px; font-size: 13px; font-weight: 600;">$1</h3>')
+        .replace(/^## (.+)$/gm, '<h2 style="margin-top: 16px; font-size: 14px; font-weight: 700;">$1</h2>')
+        .replace(/^# (.+)$/gm, '<h1 style="margin-top: 20px; font-size: 16px; font-weight: 700;">$1</h1>')
+        .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+        .replace(/\*(.+?)\*/g, '<em>$1</em>')
+        .replace(/^- (.+)$/gm, '<li style="margin-left: 20px;">$1</li>')
+        .replace(/(<li[^>]*>.*?<\/li>)/s, '<ul style="list-style: disc;">$1</ul>')
+        .replace(/\n\n+/g, '</p><p>')
+        .replace(/^(?!<[^>]+>)/gm, '<p>')
+        .replace(/(?<!<\/[^>]+>)$/gm, '</p>');
+      return html;
     }
   </script>
 </body>
