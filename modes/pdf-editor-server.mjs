@@ -428,6 +428,11 @@ async function handleRequest(req, res) {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const pathname = url.pathname;
 
+  // Debug logging for POST requests
+  if (req.method === 'POST') {
+    console.log(`[DEBUG] POST ${pathname}`);
+  }
+
   // CORS headers
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -447,6 +452,7 @@ async function handleRequest(req, res) {
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
       res.end(html);
     } catch (error) {
+      console.error('[HOME] Failed to load files:', error && error.stack ? error.stack : error);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'Failed to load files' }));
     }
@@ -734,7 +740,11 @@ async function handleRequest(req, res) {
       }
 
       const queueContent = await readFile(queuePath, 'utf-8');
-      const candidates = queueContent
+      const toMillis = (value) => {
+        const time = new Date(value || '').getTime();
+        return Number.isFinite(time) ? time : 0;
+      };
+      let candidates = queueContent
         .split('\n')
         .filter(line => line.trim())
         .map(line => {
@@ -745,8 +755,46 @@ async function handleRequest(req, res) {
           }
         })
         .filter(c => c && c.score >= 60)
-        .sort((a, b) => b.score - a.score)
-        .slice(0, 100); // Limit to first 100 for performance
+        .sort((a, b) => {
+          const dateDiff = toMillis(b.exported_at || b.collected_at) - toMillis(a.exported_at || a.collected_at);
+          if (dateDiff !== 0) return dateDiff;
+          const scoreDiff = (b.score || 0) - (a.score || 0);
+          if (scoreDiff !== 0) return scoreDiff;
+          return String(a.company || '').localeCompare(String(b.company || ''));
+        });
+
+      // Detect existing reports and PDFs for each candidate
+      const reportsDir = resolve(BASE, 'reports');
+      const pdfDir = resolve(BASE, 'output', 'pdf');
+
+      if (existsSync(reportsDir) && existsSync(pdfDir)) {
+        const reportFiles = await readdir(reportsDir);
+        const pdfFiles = await readdir(pdfDir);
+
+        candidates = candidates.map(c => {
+          const slug = c.company.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+
+          // Look for matching report (most recent one with this company slug)
+          const matchingReport = reportFiles
+            .filter(f => f.includes(slug) && f.endsWith('.md'))
+            .sort()
+            .pop();
+          if (matchingReport) {
+            c.reportPath = resolve(reportsDir, matchingReport);
+          }
+
+          // Look for matching PDF (most recent one with this company slug)
+          const matchingPdf = pdfFiles
+            .filter(f => f.includes(slug) && f.endsWith('.pdf'))
+            .sort()
+            .pop();
+          if (matchingPdf) {
+            c.pdfPath = resolve(pdfDir, matchingPdf);
+          }
+
+          return c;
+        });
+      }
 
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(candidates));
@@ -830,6 +878,142 @@ async function handleRequest(req, res) {
           action: 'switch-to-evaluate',
           instruction: 'Switched to Evaluate tab with URL pre-filled. Select evaluation blocks and click Evaluate.'
         }));
+      } catch (error) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: error.message }));
+      }
+    });
+    return;
+  }
+
+  // POST /api/generate-report — Generate report for candidate
+  if (req.method === 'POST' && pathname === '/api/generate-report') {
+    let body = '';
+    req.on('data', chunk => { body += chunk.toString(); });
+    req.on('end', async () => {
+      try {
+        const { url, candidateId } = JSON.parse(body);
+        if (!url || !candidateId) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'URL and candidateId required' }));
+          return;
+        }
+
+        // Call evaluation engine to generate report
+        const result = await evaluate({
+          blocks: ['A', 'B', 'C', 'D', 'E', 'F', 'G'],
+          url,
+          candidateId,
+          saveReport: true,
+          saveTracker: true
+        });
+
+        if (result.error) {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: result.error }));
+          return;
+        }
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          success: true,
+          message: 'Report generated successfully',
+          reportPath: result.reportPath
+        }));
+      } catch (error) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: error.message }));
+      }
+    });
+    return;
+  }
+
+  // POST /api/generate-pdf — Generate PDF for candidate (requires report first)
+  if (req.method === 'POST' && pathname === '/api/generate-pdf') {
+    let body = '';
+    req.on('data', chunk => { body += chunk.toString(); });
+    req.on('end', async () => {
+      try {
+        const { candidateId } = JSON.parse(body);
+        if (!candidateId) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'candidateId required' }));
+          return;
+        }
+
+        // Find candidate in queue
+        const queuePath = resolve(BASE, 'data', 'job_queue.jsonl');
+        const queueContent = await readFile(queuePath, 'utf-8');
+        let candidate = null;
+
+        for (const line of queueContent.split('\n')) {
+          if (!line.trim()) continue;
+          try {
+            const c = JSON.parse(line);
+            if (c.id === candidateId) {
+              candidate = c;
+              break;
+            }
+          } catch {
+            continue;
+          }
+        }
+
+        if (!candidate) {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Candidate not found' }));
+          return;
+        }
+
+        // Generate basic resume HTML from cv-brief.md
+        const cvBriefPath = resolve(BASE, 'cv-brief.md');
+        const resumeHtml = await generateBasicResume(cvBriefPath, candidate.company, new Date().toISOString().split('T')[0]);
+
+        // Create output directory if needed
+        const fs = await import('fs');
+        await fs.promises.mkdir(OUTPUT_HTML_DIR, { recursive: true });
+
+        // Save resume HTML with candidate-based filename
+        const date = new Date().toISOString().split('T')[0];
+        const slug = candidate.company.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+        const htmlFilename = `resume-${slug}-${date}`;
+        const htmlPath = resolve(OUTPUT_HTML_DIR, `${htmlFilename}.html`);
+        await writeFile(htmlPath, resumeHtml, 'utf-8');
+
+        // Now generate PDF from HTML
+        const outputDir = resolve(BASE, 'output', 'pdf');
+        const outputPdf = resolve(outputDir, `${htmlFilename}.pdf`);
+
+        await fs.promises.mkdir(outputDir, { recursive: true });
+
+        // Run generate-pdf.mjs
+        const proc = spawn('node', ['generate-pdf.mjs', htmlPath, outputPdf], {
+          cwd: BASE,
+          stdio: ['pipe', 'pipe', 'pipe']
+        });
+
+        let stderr = '';
+        proc.stderr.on('data', (data) => { stderr += data.toString(); });
+
+        proc.on('close', async (code) => {
+          if (code !== 0) {
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: `PDF generation failed: ${stderr}` }));
+          } else {
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({
+              success: true,
+              message: 'PDF generated successfully',
+              pdfPath: outputPdf,
+              htmlPath
+            }));
+          }
+        });
+
+        proc.on('error', (error) => {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: error.message }));
+        });
       } catch (error) {
         res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: error.message }));
@@ -1113,9 +1297,9 @@ function buildIndexTemplate(files) {
     <h1>📄 Career Ops - CV Editor</h1>
 
     <div class="tabs">
-      <button class="tab-btn" onclick="switchTab('evaluate')">Evaluate JD</button>
-      <button class="tab-btn active" onclick="switchTab('cvs')">Saved CVs</button>
-      <button class="tab-btn" onclick="switchTab('queue')">Queue</button>
+      <button class="tab-btn" data-tab="evaluate">Evaluate JD</button>
+      <button class="tab-btn active" data-tab="cvs">Saved CVs</button>
+      <button class="tab-btn" data-tab="queue">Queue</button>
     </div>
 
     <!-- Tab 1: Evaluate -->
@@ -1252,37 +1436,15 @@ function buildIndexTemplate(files) {
           <input type="text" id="queueSearch" placeholder="Search by company or role..." style="width: 100%; padding: 10px; border: 1px solid var(--border-color); border-radius: 6px;">
         </div>
 
+        <div style="display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 12px; flex-wrap: wrap;">
+          <div id="queueCountSummary" class="count" style="margin-bottom: 0;">Loading queue...</div>
+          <div id="queuePagination" style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;"></div>
+        </div>
+
+        <div id="generateStatus" class="status" style="margin-bottom: 12px;"></div>
+
         <div id="queueList" style="display: grid; gap: 12px;">
           <p class="empty">Loading queue...</p>
-        </div>
-      </div>
-
-      <div id="candidatePreview" style="display: none; margin-top: 30px;">
-        <div class="section">
-          <h2>📋 Candidate Preview</h2>
-          <div style="background: var(--bg-secondary); padding: 16px; border-radius: 6px; margin-bottom: 16px;">
-            <div style="margin-bottom: 12px;">
-              <div style="font-size: 14px; font-weight: 600; color: var(--text-primary);">
-                <span id="previewCompany"></span> — <span id="previewRole"></span>
-              </div>
-              <div style="font-size: 12px; color: var(--text-secondary); margin-top: 4px;">
-                Score: <span id="previewScore" style="font-weight: 600; color: var(--primary);"></span> / 100
-              </div>
-            </div>
-            <textarea id="previewDescription" readonly style="min-height: 150px; background: var(--bg-primary); resize: vertical;"></textarea>
-          </div>
-
-          <div id="previewReport" style="display: none;">
-            <h3 style="font-size: 13px; font-weight: 600; margin-bottom: 10px; color: var(--text-primary);">Existing Report</h3>
-            <div id="reportContent" style="max-height: 300px; overflow-y: auto; border: 1px solid var(--border-color); padding: 12px; border-radius: 6px; background: var(--bg-secondary); font-size: 12px; line-height: 1.5;">
-              <!-- Report content will be rendered here -->
-            </div>
-          </div>
-
-          <button id="generateBtn" onclick="generateForCandidate()" style="margin-top: 16px; background: var(--success);">
-            ⚙️ Generate (oferta → pdf)
-          </button>
-          <div id="generateStatus" class="status" style="margin-top: 12px;"></div>
         </div>
       </div>
     </div>
@@ -1370,8 +1532,8 @@ function buildIndexTemplate(files) {
     function formatReportHtml(result) {
       const { metadata, blocks } = result;
       let html = \`<h3>\${metadata.company} - \${metadata.role}</h3>\`;
-      html += \`<p><strong>Score:</strong> \${metadata.score?.toFixed(1) || 'N/A'}/5</p>\`;
-      html += \`<p><strong>Blocks executed:</strong> \${metadata.blocksExecuted?.join(', ') || 'None'}</p>\`;
+      html += \`<p><strong>Score:</strong> \${metadata.score != null && typeof metadata.score.toFixed === 'function' ? metadata.score.toFixed(1) : 'N/A'}/5</p>\`;
+      html += \`<p><strong>Blocks executed:</strong> \${Array.isArray(metadata.blocksExecuted) ? metadata.blocksExecuted.join(', ') : 'None'}</p>\`;
       html += \`<p><strong>Tokens used:</strong> \${metadata.tokenEstimate || 'N/A'}</p>\`;
       html += '<hr style="margin: 15px 0; border: none; border-top: 1px solid #ddd;">';
 
@@ -1386,13 +1548,13 @@ function buildIndexTemplate(files) {
         if (blocks.B.matches && Array.isArray(blocks.B.matches)) {
           html += \`<p><strong>Matches:</strong> \${blocks.B.matches.length}</p>\`;
           blocks.B.matches.slice(0, 3).forEach(m => {
-            html += \`<li>✓ \${m.requirement?.substring(0, 80) || 'Match'}</li>\`;
+            html += \`<li>✓ \${m && m.requirement ? m.requirement.substring(0, 80) : 'Match'}</li>\`;
           });
         }
         if (blocks.B.gaps && Array.isArray(blocks.B.gaps) && blocks.B.gaps.length > 0) {
           html += \`<p><strong>Gaps:</strong> \${blocks.B.gaps.length}</p>\`;
           blocks.B.gaps.slice(0, 2).forEach(g => {
-            html += \`<li>✗ \${g?.substring ? g.substring(0, 80) : g}</li>\`;
+            html += \`<li>✗ \${g && typeof g.substring === 'function' ? g.substring(0, 80) : g}</li>\`;
           });
         }
         if (blocks.B.matchPercentage !== undefined) {
@@ -1470,123 +1632,279 @@ function buildIndexTemplate(files) {
 
     // Queue functions
     let queueCandidates = [];
+    let queueFilteredCandidates = [];
+    let queueCurrentPage = 1;
     let selectedCandidate = null;
+    const QUEUE_PAGE_SIZE = 20;
 
-    function switchTab(tab) {
-      document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
-      document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
-      document.getElementById(tab).classList.add('active');
+    function getQueueDateValue(candidate) {
+      const source = candidate && (candidate.exported_at || candidate.collected_at || '');
+      const value = new Date(source).getTime();
+      return Number.isFinite(value) ? value : 0;
+    }
 
-      // Find and activate the corresponding button by looking at onclick attribute
+    function sortQueueCandidates(candidates) {
+      return [...(candidates || [])].sort((a, b) => {
+        const dateDiff = getQueueDateValue(b) - getQueueDateValue(a);
+        if (dateDiff !== 0) return dateDiff;
+        const scoreDiff = (b.score || 0) - (a.score || 0);
+        if (scoreDiff !== 0) return scoreDiff;
+        return String(a.company || '').localeCompare(String(b.company || ''));
+      });
+    }
+
+    function escapeHtml(value) {
+      return String(value || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
+    function getQueueLocationText(candidate) {
+      const parts = [
+        candidate?.location,
+        candidate?.city,
+        candidate?.region,
+        candidate?.country
+      ].filter(Boolean);
+      return parts.length ? parts.join(' · ') : 'Location unavailable';
+    }
+
+    function switchTab(tabName) {
+      console.log('[switchTab] Switching to:', tabName);
+      const contents = document.querySelectorAll('.tab-content');
       const buttons = document.querySelectorAll('.tab-btn');
-      for (const btn of buttons) {
-        if (btn.getAttribute('onclick') === \`switchTab('\${tab}')\`) {
-          btn.classList.add('active');
-          break;
-        }
-      }
 
-      // Load queue candidates when queue tab is activated
-      if (tab === 'queue') {
+      console.log('[switchTab] Found', contents.length, 'tab contents and', buttons.length, 'buttons');
+
+      contents.forEach(el => {
+        const isActive = el.id === tabName;
+        console.log('[switchTab] Setting', el.id, 'to active:', isActive);
+        el.classList.toggle('active', isActive);
+        el.style.display = isActive ? 'block' : 'none';
+      });
+
+      buttons.forEach(btn => {
+        const isActive = btn.dataset.tab === tabName;
+        console.log('[switchTab] Button', btn.dataset.tab, 'to active:', isActive);
+        btn.classList.toggle('active', isActive);
+      });
+
+      if (tabName === 'queue') {
+        console.log('[switchTab] Queue tab activated, loading candidates');
         loadQueueCandidates();
       }
     }
+
+    // Ensure the initial visible tab is applied consistently.
+    console.log('[init] Initializing tabs');
+    switchTab('cvs');
+
+    // Set up tab button click handlers
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const tabName = btn.dataset.tab;
+        console.log('[tab-click] User clicked tab:', tabName);
+        switchTab(tabName);
+      });
+    });
 
     async function loadQueueCandidates() {
       try {
         const response = await fetch('/api/queue');
         if (!response.ok) throw new Error('Failed to load queue');
 
-        queueCandidates = await response.json();
-        renderQueueList(queueCandidates);
+        queueCandidates = sortQueueCandidates(await response.json());
+        queueFilteredCandidates = queueCandidates.slice();
+        queueCurrentPage = 1;
+        renderQueueList(queueFilteredCandidates);
       } catch (error) {
         document.getElementById('queueList').innerHTML = \`<p class="empty">Error loading queue: \${error.message}</p>\`;
+        const summary = document.getElementById('queueCountSummary');
+        if (summary) summary.textContent = 'Error loading queue';
       }
     }
 
     function renderQueueList(candidates) {
+      queueFilteredCandidates = sortQueueCandidates(candidates || []);
+      queueCurrentPage = 1;
+      renderQueuePage();
+    }
+
+    function renderQueuePage() {
       const list = document.getElementById('queueList');
-      if (!candidates || candidates.length === 0) {
+      const pagination = document.getElementById('queuePagination');
+      const summary = document.getElementById('queueCountSummary');
+      const status = document.getElementById('generateStatus');
+      const total = queueFilteredCandidates.length;
+      const totalPages = Math.max(1, Math.ceil(total / QUEUE_PAGE_SIZE));
+      queueCurrentPage = Math.min(Math.max(queueCurrentPage, 1), totalPages);
+      const startIndex = (queueCurrentPage - 1) * QUEUE_PAGE_SIZE;
+      const pageCandidates = queueFilteredCandidates.slice(startIndex, startIndex + QUEUE_PAGE_SIZE);
+
+      if (summary) {
+        if (!total) {
+          summary.textContent = 'No candidates found';
+        } else {
+          const endIndex = Math.min(startIndex + pageCandidates.length, total);
+          summary.textContent = \`Showing \${startIndex + 1}-\${endIndex} of \${total} candidates\`;
+        }
+      }
+
+      if (pagination) {
+        if (!total) {
+          pagination.innerHTML = '';
+        } else {
+          const prevDisabled = queueCurrentPage <= 1 ? 'disabled' : '';
+          const nextDisabled = queueCurrentPage >= totalPages ? 'disabled' : '';
+          pagination.innerHTML = \`
+            <button class="btn-link" style="padding: 6px 10px; border: 1px solid var(--border-color); background: var(--bg-secondary); border-radius: 6px; cursor: pointer; \${queueCurrentPage <= 1 ? 'opacity: 0.5; cursor: not-allowed;' : ''}" \${prevDisabled} onclick="changeQueuePage(-1)">Prev</button>
+            <span class="count" style="margin-bottom: 0;">Page \${queueCurrentPage} / \${totalPages}</span>
+            <button class="btn-link" style="padding: 6px 10px; border: 1px solid var(--border-color); background: var(--bg-secondary); border-radius: 6px; cursor: pointer; \${queueCurrentPage >= totalPages ? 'opacity: 0.5; cursor: not-allowed;' : ''}" \${nextDisabled} onclick="changeQueuePage(1)">Next</button>
+          \`;
+        }
+      }
+
+      if (status && !selectedCandidate) {
+        status.textContent = '';
+        status.className = 'status';
+      }
+
+      if (!pageCandidates.length) {
         list.innerHTML = '<p class="empty">No candidates found</p>';
         return;
       }
 
-      const html = candidates.map(c => \`
-        <div onclick="selectCandidate('\${c.id}')" style="
-          padding: 12px;
-          background: var(--bg-secondary);
-          border: 2px solid transparent;
-          border-radius: 6px;
-          cursor: pointer;
-          transition: all 0.2s;
-        " onmouseover="this.style.borderColor='var(--primary)'" onmouseout="this.style.borderColor='transparent'" class="queue-item" data-candidate-id="\${c.id}">
-          <div style="display: flex; justify-content: space-between; align-items: center;">
-            <div>
-              <div style="font-weight: 600; color: var(--text-primary);">\${c.company}</div>
-              <div style="font-size: 12px; color: var(--text-secondary);">\${c.role}</div>
-            </div>
-            <div style="
-              background: var(--primary);
-              color: white;
-              padding: 4px 10px;
-              border-radius: 20px;
-              font-size: 12px;
-              font-weight: 600;
-            ">\${c.score}</div>
-          </div>
-        </div>
-      \`).join('');
+      const formatDateTime = (dateStr) => {
+        if (!dateStr) return '—';
+        const date = new Date(dateStr);
+        return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) + ' ' +
+               date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
+      };
+
+      const html = \`
+        <table style="width: 100%; border-collapse: collapse; font-size: 13px; table-layout: fixed;">
+          <thead style="background: var(--bg-secondary); border-bottom: 2px solid var(--border-color);">
+            <tr>
+              <th style="padding: 10px; text-align: left; font-weight: 600; width: 44%;">Company</th>
+              <th style="padding: 10px; text-align: center; font-weight: 600; width: 12%;">Score</th>
+              <th style="padding: 10px; text-align: center; font-weight: 600; width: 18%;">Recent</th>
+              <th style="padding: 10px; text-align: center; font-weight: 600; width: 26%;">Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            \${pageCandidates.map((c) => {
+              const isSelected = selectedCandidate && selectedCandidate.id === c.id;
+              const locationText = getQueueLocationText(c);
+              const descriptionHtml = escapeHtml(c.description || '(No description)').replace(/\\n/g, '<br>');
+              return \`
+              <tr data-candidate-id="\${c.id}" class="queue-item" onclick="selectCandidate('\${c.id}')" style="border-bottom: 1px solid var(--border-color); transition: background 0.2s; cursor: pointer; \${isSelected ? 'background: rgba(37, 99, 235, 0.05);' : ''}" onmouseover="this.style.background='var(--bg-secondary)'" onmouseout="this.style.background='\${isSelected ? 'rgba(37, 99, 235, 0.05)' : 'transparent'}'">
+                <td style="padding: 10px;">
+                  <div style="display: flex; flex-direction: column; gap: 4px;">
+                    <div style="font-weight: 600; color: var(--text-primary); text-align: left;">\${escapeHtml(c.company)}</div>
+                    <div style="color: var(--text-secondary); font-size: 12px; text-align: left;">\${escapeHtml(locationText)}</div>
+                  </div>
+                </td>
+                <td style="padding: 10px; text-align: center;">
+                  <span style="
+                    background: var(--primary);
+                    color: white;
+                    padding: 4px 10px;
+                    border-radius: 20px;
+                    font-weight: 600;
+                    font-size: 12px;
+                    display: inline-block;
+                  ">\${c.score}</span>
+                </td>
+                <td style="padding: 10px; text-align: center; font-size: 12px; color: var(--text-secondary);">
+                  \${formatDateTime(c.exported_at || c.collected_at)}
+                </td>
+                <td style="padding: 10px; text-align: center;">
+                  <div style="display: flex; justify-content: center; gap: 8px; align-items: center;">
+                    <button onclick="event.stopPropagation(); generateForCandidate('\${c.id}')" class="btn-gen" title="Prepare offer" style="min-width: 84px;">oferta</button>
+                    <button onclick="event.stopPropagation(); deleteCandidate('\${c.id}', '\${escapeHtml(c.company)}')" class="btn-delete" title="Remove">✕</button>
+                  </div>
+                </td>
+              </tr>
+              \${isSelected ? \`
+                <tr class="queue-detail-row" data-detail-for="\${c.id}">
+                  <td colspan="4" style="padding: 0 10px 16px 10px; border-bottom: 1px solid var(--border-color);">
+                    <div style="background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 10px; padding: 16px;">
+                      <div style="display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; margin-bottom: 12px;">
+                        <div>
+                          <div style="font-size: 15px; font-weight: 700; color: var(--text-primary); margin-bottom: 4px;">\${escapeHtml(c.company)} — \${escapeHtml(c.role || 'Role unavailable')}</div>
+                          <div style="font-size: 12px; color: var(--text-secondary);">Location: \${escapeHtml(locationText)}</div>
+                        </div>
+                        <div style="font-size: 12px; color: var(--text-secondary); text-align: right;">
+                          <div style="font-weight: 600; color: var(--primary); font-size: 13px;">Score \${c.score} / 100</div>
+                          <div>\${formatDateTime(c.exported_at || c.collected_at)}</div>
+                        </div>
+                      </div>
+                      <div style="font-size: 12px; font-weight: 600; color: var(--text-primary); margin-bottom: 8px;">📋 Job Description</div>
+                      <div style="white-space: pre-wrap; font-size: 12px; line-height: 1.65; color: var(--text-primary); background: var(--bg-primary); border: 1px solid var(--border-color); border-radius: 8px; padding: 12px; max-height: 260px; overflow-y: auto;">\${descriptionHtml}</div>
+                    </div>
+                  </td>
+                </tr>
+              \` : ''}
+              \`;
+            }).join('')}
+          </tbody>
+        </table>
+      \`;
 
       list.innerHTML = html;
+    }
+    function changeQueuePage(delta) {
+      const nextPage = queueCurrentPage + delta;
+      const totalPages = Math.max(1, Math.ceil(queueFilteredCandidates.length / QUEUE_PAGE_SIZE));
+      queueCurrentPage = Math.min(Math.max(nextPage, 1), totalPages);
+      renderQueuePage();
     }
 
     async function selectCandidate(candidateId) {
       try {
-        const response = await fetch(\`/api/candidate/\${candidateId}\`);
-        if (!response.ok) throw new Error('Failed to load candidate');
+        const candidate = queueCandidates.find(c => c.id === candidateId);
+        if (!candidate) throw new Error('Candidate not found');
 
-        const data = await response.json();
-        selectedCandidate = data.candidate;
+        selectedCandidate = candidate;
+        renderQueuePage();
 
-        // Update preview
-        document.getElementById('previewCompany').textContent = selectedCandidate.company;
-        document.getElementById('previewRole').textContent = selectedCandidate.role;
-        document.getElementById('previewScore').textContent = selectedCandidate.score;
-        document.getElementById('previewDescription').textContent = selectedCandidate.description || '(No description)';
-
-        // Show/hide report
-        if (data.reportContent) {
-          document.getElementById('previewReport').style.display = 'block';
-          document.getElementById('reportContent').innerHTML = markdownToHtml(data.reportContent);
-        } else {
-          document.getElementById('previewReport').style.display = 'none';
+        const status = document.getElementById('generateStatus');
+        if (status) {
+          status.textContent = '';
+          status.className = 'status';
         }
-
-        // Update selection styling
-        document.querySelectorAll('.queue-item').forEach(el => {
-          el.style.borderColor = 'transparent';
-          el.style.background = 'var(--bg-secondary)';
-        });
-        document.querySelector(\`[data-candidate-id="\${candidateId}"]\`).style.borderColor = 'var(--primary)';
-        document.querySelector(\`[data-candidate-id="\${candidateId}"]\`).style.background = 'rgba(37, 99, 235, 0.05)';
-
-        // Show preview
-        document.getElementById('candidatePreview').style.display = 'block';
-        document.getElementById('generateStatus').textContent = '';
       } catch (error) {
         alert('Error loading candidate: ' + error.message);
       }
     }
 
-    async function generateForCandidate() {
+    function deleteCandidate(candidateId, company) {
+      if (!confirm(\`Delete \${company} from queue?\`)) return;
+
+      queueCandidates = queueCandidates.filter(c => c.id !== candidateId);
+
+      if (selectedCandidate && selectedCandidate.id === candidateId) {
+        selectedCandidate = null;
+      }
+
+      renderQueueList(queueCandidates);
+    }
+
+    async function generateForCandidate(candidateId = null) {
+      if (candidateId && (!selectedCandidate || selectedCandidate.id !== candidateId)) {
+        const candidate = queueCandidates.find(c => c.id === candidateId);
+        if (candidate) {
+          selectedCandidate = candidate;
+        }
+      }
+
       if (!selectedCandidate) {
         alert('Please select a candidate first');
         return;
       }
-
-      const btn = document.getElementById('generateBtn');
-      btn.disabled = true;
-      btn.textContent = '⏳ Preparing...';
 
       try {
         const response = await fetch('/api/generate', {
@@ -1600,50 +1918,164 @@ function buildIndexTemplate(files) {
 
         if (!response.ok) throw new Error('Generation failed');
 
-        const result = await response.json();
+        await response.json();
 
-        // Pre-fill the evaluate tab with the candidate URL
         document.getElementById('jdInput').value = selectedCandidate.url;
 
-        // Show success message
-        const statusMsg = '✓ Switched to Evaluate tab. URL pre-filled: ' + selectedCandidate.company + ' — ' + selectedCandidate.role;
+        const statusMsg = '✓ Prepared for Evaluate tab. URL pre-filled: ' + selectedCandidate.company + ' — ' + selectedCandidate.role;
         document.getElementById('generateStatus').innerHTML = statusMsg;
         document.getElementById('generateStatus').className = 'status success';
 
-        // Switch to evaluate tab after a brief delay
         setTimeout(() => {
           switchTab('evaluate');
         }, 500);
       } catch (error) {
         document.getElementById('generateStatus').innerHTML = '✗ ' + error.message;
         document.getElementById('generateStatus').className = 'status error';
-      } finally {
-        btn.disabled = false;
-        btn.textContent = '⚙️ Generate (oferta → pdf)';
       }
     }
 
-    document.getElementById('queueSearch')?.addEventListener('input', (e) => {
-      const query = e.target.value.toLowerCase();
-      const filtered = queueCandidates.filter(c =>
-        c.company.toLowerCase().includes(query) || c.role.toLowerCase().includes(query)
-      );
-      renderQueueList(filtered);
-    });
+    async function generateReport(candidateId) {
+      if (!selectedCandidate || selectedCandidate.id !== candidateId) {
+        alert('Please select the candidate first');
+        return;
+      }
+
+      const statusEl = document.getElementById('generateStatus');
+      statusEl.innerHTML = '⏳ Generating report...';
+      statusEl.className = 'status info';
+
+      try {
+        const response = await fetch('/api/generate-report', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            url: selectedCandidate.url,
+            candidateId: selectedCandidate.id
+          })
+        });
+
+        if (!response.ok) throw new Error('Report generation failed');
+
+        const result = await response.json();
+        statusEl.innerHTML = '✓ Report generated successfully';
+        statusEl.className = 'status success';
+
+        // Reload queue to update report status
+        loadQueueCandidates();
+        setTimeout(() => {
+          selectCandidate(candidateId);
+        }, 500);
+      } catch (error) {
+        statusEl.innerHTML = '✗ ' + error.message;
+        statusEl.className = 'status error';
+      }
+    }
+
+    async function generatePDF(candidateId) {
+      if (!selectedCandidate || selectedCandidate.id !== candidateId) {
+        alert('Please select the candidate first');
+        return;
+      }
+
+      const statusEl = document.getElementById('generateStatus');
+      statusEl.innerHTML = '⏳ Generating PDF...';
+      statusEl.className = 'status info';
+
+      try {
+        const response = await fetch('/api/generate-pdf', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            candidateId: selectedCandidate.id
+          })
+        });
+
+        if (!response.ok) throw new Error('PDF generation failed');
+
+        const result = await response.json();
+        statusEl.innerHTML = '✓ PDF generated successfully';
+        statusEl.className = 'status success';
+
+        // Reload queue to update PDF status
+        loadQueueCandidates();
+        setTimeout(() => {
+          selectCandidate(candidateId);
+        }, 500);
+      } catch (error) {
+        statusEl.innerHTML = '✗ ' + error.message;
+        statusEl.className = 'status error';
+      }
+    }
+
+    (function () {
+      const queueSearch = document.getElementById('queueSearch');
+      if (!queueSearch) return;
+      queueSearch.addEventListener('input', (e) => {
+        const query = e.target.value.toLowerCase();
+        const filtered = queueCandidates.filter(c =>
+          c.company.toLowerCase().includes(query) || c.role.toLowerCase().includes(query)
+        );
+        renderQueueList(filtered);
+      });
+    })();
 
     function markdownToHtml(md) {
-      let html = md
-        .replace(/^### (.+)$/gm, '<h3 style="margin-top: 12px; font-size: 13px; font-weight: 600;">$1</h3>')
-        .replace(/^## (.+)$/gm, '<h2 style="margin-top: 16px; font-size: 14px; font-weight: 700;">$1</h2>')
-        .replace(/^# (.+)$/gm, '<h1 style="margin-top: 20px; font-size: 16px; font-weight: 700;">$1</h1>')
-        .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-        .replace(/\*(.+?)\*/g, '<em>$1</em>')
-        .replace(/^- (.+)$/gm, '<li style="margin-left: 20px;">$1</li>')
-        .replace(/(<li[^>]*>.*?<\/li>)/s, '<ul style="list-style: disc;">$1</ul>')
-        .replace(/\n\n+/g, '</p><p>')
-        .replace(/^(?!<[^>]+>)/gm, '<p>')
-        .replace(/(?<!<\/[^>]+>)$/gm, '</p>');
-      return html;
+      const safe = String(md || '');
+      const lines = safe.split('\\n');
+      const blocks = [];
+      let listItems = [];
+
+      const flushList = () => {
+        if (!listItems.length) return;
+        blocks.push('<ul style="list-style: disc; margin: 8px 0 8px 20px;">' + listItems.join('') + '</ul>');
+        listItems = [];
+      };
+
+      const inlineFormat = (text) => text
+        .replace(/\\*\\*(.+?)\\*\\*/g, '<strong>$1</strong>')
+        .replace(/\\*(.+?)\\*/g, '<em>$1</em>');
+
+      for (const rawLine of lines) {
+        const line = rawLine.trim();
+        if (!line) {
+          flushList();
+          continue;
+        }
+
+        const heading3 = line.match(/^### (.+)$/);
+        if (heading3) {
+          flushList();
+          blocks.push('<h3 style="margin-top: 12px; font-size: 13px; font-weight: 600;">' + inlineFormat(heading3[1]) + '</h3>');
+          continue;
+        }
+
+        const heading2 = line.match(/^## (.+)$/);
+        if (heading2) {
+          flushList();
+          blocks.push('<h2 style="margin-top: 16px; font-size: 14px; font-weight: 700;">' + inlineFormat(heading2[1]) + '</h2>');
+          continue;
+        }
+
+        const heading1 = line.match(/^# (.+)$/);
+        if (heading1) {
+          flushList();
+          blocks.push('<h1 style="margin-top: 20px; font-size: 16px; font-weight: 700;">' + inlineFormat(heading1[1]) + '</h1>');
+          continue;
+        }
+
+        const bullet = line.match(/^- (.+)$/);
+        if (bullet) {
+          listItems.push('<li style="margin-left: 20px;">' + inlineFormat(bullet[1]) + '</li>');
+          continue;
+        }
+
+        flushList();
+        blocks.push('<p>' + inlineFormat(line) + '</p>');
+      }
+
+      flushList();
+      return blocks.join('');
     }
   </script>
 </body>
