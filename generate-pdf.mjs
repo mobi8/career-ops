@@ -133,18 +133,27 @@ async function generatePDF() {
     console.log(`🧹 ATS normalization: ${totalReplacements} replacements (${breakdown})`);
   }
 
-  const browser = await chromium.launch({ headless: true });
+  const browser = await chromium.launch({
+    headless: true,
+    timeout: 30000,
+    args: ['--disable-gpu', '--single-process']
+  });
   try {
     const page = await browser.newPage();
 
     // Set content with file base URL for any relative resources
     await page.setContent(html, {
-      waitUntil: 'networkidle',
+      waitUntil: 'load',
       baseURL: `file://${dirname(inputPath)}/`,
+      timeout: 30000
     });
 
-    // Wait for fonts to load
-    await page.evaluate(() => document.fonts.ready);
+    // Wait for fonts to load (with timeout)
+    try {
+      await page.evaluate(() => document.fonts.ready, { timeout: 5000 });
+    } catch (e) {
+      console.warn('Font loading timeout, continuing...');
+    }
 
     // Generate PDF
     const pdfBuffer = await page.pdf({

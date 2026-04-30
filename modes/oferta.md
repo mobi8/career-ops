@@ -1,6 +1,53 @@
-# Modo: oferta — Evaluación Completa A-G
+# Modo: oferta — Evaluación Modular A-G
 
-Cuando el candidato pega una oferta (texto o URL), entregar SIEMPRE los 7 bloques (A-F evaluation + G legitimacy):
+**PRIMERO: Preguntar al usuario qué bloques quiere evaluar.**
+
+Mostrar este menú interactivo:
+
+```
+¿Cuál es tu objetivo?
+
+A) Solo primeras impresiones (Paso 0 + A + B)
+   → Detectar arquetipo + verificar match básico (~4K tokens)
+
+B) Decisión rápida (Paso 0 + A-C)
+   → Adicional: nivel y estrategia de negociación (~5K tokens)
+
+C) Evaluación media (Paso 0 + A-E)
+   → Adicional: comp/demanda + plan de personalización (~8K tokens)
+
+D) Evaluación completa (Paso 0 + A-G)
+   → Incluye: legitimacy check + plan de entrevistas (~12K tokens)
+
+E) Custom: Selecciona bloques específicos
+   → Ej: Solo A, B, G (verificar match + legitimidad)
+```
+
+**Después de recibir la selección:**
+1. Si A → blocks = ['A', 'B']
+2. Si B → blocks = ['A', 'B', 'C']
+3. Si C → blocks = ['A', 'B', 'C', 'D', 'E']
+4. Si D → blocks = ['A', 'B', 'C', 'D', 'E', 'F', 'G']
+5. Si E → mostrar checklist de bloques individuales
+
+Luego ejecutar `evaluation-engine.mjs` con los bloques seleccionados.
+
+---
+
+## IMPORTANTE: Block Definitions
+
+**Esta archivo es una guía estructural.** Las definiciones completas y detalladas de cada bloque están en `batch/batch-prompt.md`:
+
+- **Paso 0 — Detección de Arquetipo:** Lee en batch-prompt.md, líneas ~54-88
+- **Bloque A — Resumen del Rol:** Lee en batch-prompt.md, líneas ~90-92
+- **Bloque B — Match con CV:** Lee en batch-prompt.md, líneas ~94-111
+- **Bloque C — Nivel y Estrategia:** Lee en batch-prompt.md, líneas ~112-116
+- **Bloque D — Comp y Demanda:** Lee en batch-prompt.md, líneas ~118-122
+- **Bloque E — Plan de Personalización:** Lee en batch-prompt.md, líneas ~124-129
+- **Bloque F — Plan de Entrevistas:** Lee en batch-prompt.md, líneas ~131-139
+- **Bloque G — Posting Legitimacy:** Lee en batch-prompt.md, líneas ~141-155
+
+**Instrucción clave:** Cuando ejecutes esta evaluación, carga batch-prompt.md y usa las definiciones completas de cada bloque, adaptadas a los bloques seleccionados por el usuario (A-B only, A-G, etc.). Esto asegura que incluso si el usuario selecciona "A-B only", obtenga el contenido completo y detallado de esos bloques, no una versión simplificada.
 
 ## Paso 0 — Detección de Arquetipo
 
@@ -144,11 +191,16 @@ Analyze the job posting for signals that indicate whether this is a real, active
 
 ## Post-evaluación
 
-**SIEMPRE** después de generar los bloques A-G:
+**SIEMPRE** después de generar los bloques A-G (o A-B si usuario selecciona "a"):
 
-### 1. Guardar report .md
+### 1. Guardar report .md (AUTOMÁTICO)
 
-Guardar evaluación completa en `reports/{###}-{company-slug}-{YYYY-MM-DD}.md`.
+**REGLA CRÍTICA:** Después de completar la evaluación:
+1. Generar el contenido markdown del report (ver formato abajo)
+2. Crear directorio `reports/` si no existe
+3. Guardar evaluación completa en `reports/{###}-{company-slug}-{YYYY-MM-DD}.md` 
+4. **NO** depender de que el usuario lo haga manualmente — siempre guardar el archivo
+5. Confirmar al usuario: "✅ Reporte guardado: {ruta-archivo}"
 
 - `{###}` = siguiente número secuencial (3 dígitos, zero-padded)
 - `{company-slug}` = nombre de empresa en lowercase, sin espacios (usar guiones)

@@ -351,25 +351,16 @@ async function listHtmlFiles() {
  */
 async function findReportForCv(cvId) {
   try {
-    let pattern = null;
+    // Extract date (YYYY-MM-DD) from end of cvId, e.g., "2026-04-28"
+    const dateMatch = cvId.match(/(\d{4}-\d{2}-\d{2})$/);
+    if (!dateMatch) return null;
 
-    // New format: resume-company-date (e.g., resume-acme-corp-2026-04-27)
-    if (cvId.startsWith('resume-')) {
-      const match = cvId.match(/^resume-(.+)$/);
-      if (match) pattern = match[1]; // e.g., acme-corp-2026-04-27
-    }
-    // Old format: cv-name-company-date (e.g., cv-lewis-mccoin-2026-04-27)
-    else if (cvId.startsWith('cv-')) {
-      const match = cvId.match(/^cv-[^-]+-(.+)$/);
-      if (match) pattern = match[1]; // e.g., mccoin-2026-04-27
-    }
-
-    if (!pattern) return null;
-
+    const date = dateMatch[1];
     const files = await readdir(REPORTS_DIR);
 
-    // Find report matching *-{pattern}.md
-    const report = files.find(f => f.endsWith(`-${pattern}.md`));
+    // Find report matching *-{date}.md (e.g., 010-hex-trust-2026-04-28.md)
+    // This works with any company slug or number prefix
+    const report = files.find(f => f.endsWith(`-${date}.md`));
     if (!report) return null;
 
     return resolve(REPORTS_DIR, report);

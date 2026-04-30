@@ -3,7 +3,7 @@ name: career-ops
 description: AI job search command center -- evaluate offers, generate CVs, scan portals, track applications
 user_invocable: true
 args: mode
-argument-hint: "[scan | deep | pdf | oferta | ofertas | apply | batch | tracker | pipeline | contacto | training | project | interview-prep | update]"
+argument-hint: "[scan | deep | pdf | editor | oferta | ofertas | apply | batch | tracker | pipeline | contacto | training | project | interview-prep | update]"
 ---
 
 # career-ops -- Router
@@ -16,7 +16,8 @@ Determine the mode from `{{mode}}`:
 |-------|------|
 | (empty / no args) | `discovery` -- Show command menu |
 | JD text or URL (no sub-command) | **`auto-pipeline`** |
-| `oferta` | `oferta` |
+| `editor` | `editor` |
+| `oferta [--blocks=...]` | `oferta` |
 | `ofertas` | `ofertas` |
 | `contacto` | `contacto` |
 | `deep` | `deep` |
@@ -46,6 +47,7 @@ career-ops -- Command Center
 
 Available commands:
   /career-ops {JD}      → AUTO-PIPELINE: evaluate + report + PDF + tracker (paste text or URL)
+  /career-ops editor    → Launch in-browser CV editor with split-view layout
   /career-ops pipeline  → Process pending URLs from inbox (data/pipeline.md)
   /career-ops oferta    → Evaluation only A-F (no auto PDF)
   /career-ops ofertas   → Compare and rank multiple offers
