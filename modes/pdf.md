@@ -47,14 +47,14 @@ User can:
 
 When user clicks "Export PDF":
 1. Server captures edited HTML from DOM
-2. Runs: `node generate-pdf.mjs [temp-file] output/pdf/cv-{candidate}-{company}-{YYYY-MM-DD}.pdf --format={letter|a4}`
+2. Runs: `node generate-pdf.mjs [temp-file] output/cv-{candidate}-{company}-{YYYY-MM-DD}.pdf --format={letter|a4}`
 3. Browser downloads PDF file
 4. Server reports: PDF path, file size, page count
 
 ## Output
 
 - HTML file: `output/html/cv-{candidate}-{company}-{YYYY-MM-DD}.html`
-- PDF file: `output/pdf/cv-{candidate}-{company}-{YYYY-MM-DD}.pdf` (after user exports)
+- PDF file: `output/cv-{candidate}-{company}-{YYYY-MM-DD}.pdf` (after user exports)
 - Server URL: `http://localhost:9090/?file={filename}`
 
 ## Stop Condition

@@ -22,6 +22,8 @@ import { evaluate } from '../evaluation-engine.mjs';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const BASE = resolve(__dirname, '..');
 const OUTPUT_HTML_DIR = resolve(BASE, 'output', 'html');
+const OUTPUT_PDF_DIR = resolve(BASE, 'output');
+const LEGACY_OUTPUT_PDF_DIR = resolve(BASE, 'output', 'pdf');
 const REPORTS_DIR = resolve(BASE, 'reports');
 
 /**
@@ -254,12 +256,13 @@ function extractCompanyFromFilename(filename) {
  */
 async function findPdfForHtml(htmlName) {
   try {
-    const pdfDir = resolve(BASE, 'output', 'pdf');
-    if (!existsSync(pdfDir)) return null;
-    const files = await readdir(pdfDir);
-    // Try to find matching PDF (same company slug and date)
+    const primaryPdf = resolve(OUTPUT_PDF_DIR, `${htmlName}.pdf`);
+    if (existsSync(primaryPdf)) return primaryPdf;
+
+    if (!existsSync(LEGACY_OUTPUT_PDF_DIR)) return null;
+    const files = await readdir(LEGACY_OUTPUT_PDF_DIR);
     const match = files.find(f => f.replace(/\.pdf$/, '') === htmlName);
-    return match ? resolve(pdfDir, match) : null;
+    return match ? resolve(LEGACY_OUTPUT_PDF_DIR, match) : null;
   } catch (error) {
     return null;
   }
@@ -598,7 +601,7 @@ async function handleRequest(req, res) {
         }
 
         const tmpHtml = resolve(BASE, 'output', 'html', `${filename}-tmp-editor.html`);
-        const outputDir = resolve(BASE, 'output', 'pdf');
+        const outputDir = OUTPUT_PDF_DIR;
         const outputPdf = resolve(outputDir, `${filename}.pdf`);
 
         // Ensure output directory exists
@@ -628,7 +631,7 @@ async function handleRequest(req, res) {
             res.end(JSON.stringify({
               success: true,
               path: outputPdf,
-              message: `PDF saved to output/pdf/${filename}.pdf`
+              message: `PDF saved to output/${filename}.pdf`
             }));
           }
         });
@@ -694,6 +697,7 @@ async function handleRequest(req, res) {
     try {
       const htmlPath = resolve(OUTPUT_HTML_DIR, `${id}.html`);
       const pdfPath = await findPdfForHtml(id);
+      const legacyPdfPath = resolve(LEGACY_OUTPUT_PDF_DIR, `${id}.pdf`);
       const reportPath = await findReportForHtml(id);
 
       // Delete HTML
@@ -704,6 +708,9 @@ async function handleRequest(req, res) {
       // Delete PDF
       if (pdfPath && existsSync(pdfPath)) {
         await unlink(pdfPath);
+      }
+      if (legacyPdfPath !== pdfPath && existsSync(legacyPdfPath)) {
+        await unlink(legacyPdfPath);
       }
 
       // Delete Report
@@ -2374,7 +2381,7 @@ function buildEditorTemplate(content, id, reportMd = null, cvStyles = '') {
         }
 
         const data = await response.json();
-        status.textContent = '✓ Saved to output/pdf';
+        status.textContent = '✓ Saved to output';
       } catch (error) {
         status.textContent = '✗ Error: ' + error.message;
         alert('Failed to export PDF: ' + error.message);
