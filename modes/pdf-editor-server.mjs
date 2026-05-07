@@ -13,9 +13,10 @@ import http from 'http';
 import { URL } from 'url';
 import { spawn, exec } from 'child_process';
 import { resolve, dirname, basename } from 'path';
-import { readFile, writeFile, unlink, readdir } from 'fs/promises';
+import { readFile, writeFile, unlink, readdir, mkdir } from 'fs/promises';
 import { fileURLToPath, pathToFileURL } from 'url';
 import { existsSync } from 'fs';
+import { tmpdir } from 'os';
 import querystring from 'querystring';
 import { evaluate } from '../evaluation-engine.mjs';
 
@@ -415,6 +416,362 @@ function extractHtmlContent(fullHtml) {
   return { styles, bodyContent };
 }
 
+function looksLikeUrl(value) {
+  return /^https?:\/\/\S+/i.test(String(value || '').trim());
+}
+
+function slugify(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+async function readOptionalText(filePath) {
+  try {
+    return await readFile(filePath, 'utf-8');
+  } catch {
+    return '';
+  }
+}
+
+function cleanText(value) {
+  return String(value || '')
+    .replace(/\u00a0/g, ' ')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+async function getNextReportNumber() {
+  await mkdir(REPORTS_DIR, { recursive: true });
+  const files = await readdir(REPORTS_DIR).catch(() => []);
+  const max = files.reduce((currentMax, file) => {
+    const match = file.match(/^(\d{3})-/);
+    if (!match) return currentMax;
+    return Math.max(currentMax, Number(match[1]));
+  }, 0);
+  return String(max + 1).padStart(3, '0');
+}
+
+async function extractJobTextFromUrl(url) {
+  const { chromium } = await import('playwright');
+  let browser;
+
+  try {
+    browser = await chromium.launch({ headless: true });
+    const page = await browser.newPage({ viewport: { width: 1440, height: 1800 } });
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => {});
+
+    const finalUrl = page.url();
+    const title = cleanText(await page.title().catch(() => ''));
+    const selectors = [
+      '[data-automation-id*="jobPostingDescription"]',
+      '[data-testid*="job"]',
+      '[class*="job-description"]',
+      '[class*="description"]',
+      'article',
+      '[role="main"]',
+      'main',
+      'body',
+    ];
+
+    let bestText = '';
+    for (const selector of selectors) {
+      const locator = page.locator(selector).first();
+      const candidate = await locator.innerText({ timeout: 5000 }).catch(() => '');
+      if (candidate && candidate.trim().length > bestText.trim().length) {
+        bestText = candidate.trim();
+      }
+      if (bestText.length >= 1500) break;
+    }
+
+    if (!bestText) {
+      bestText = await page.locator('body').innerText({ timeout: 5000 }).catch(() => '');
+    }
+
+    return {
+      text: cleanText(bestText),
+      title,
+      finalUrl,
+    };
+  } catch (error) {
+    const response = await fetch(url, { redirect: 'follow' });
+    const html = await response.text();
+    const stripped = cleanText(
+      html
+        .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+        .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+        .replace(/<[^>]+>/g, ' ')
+    );
+    return {
+      text: stripped,
+      title: '',
+      finalUrl: url,
+    };
+  } finally {
+    if (browser) {
+      await browser.close().catch(() => {});
+    }
+  }
+}
+
+async function resolveEvaluationInput(input) {
+  const raw = String(input || '').trim();
+  if (!raw) {
+    throw new Error('JD text required');
+  }
+
+  if (!looksLikeUrl(raw)) {
+    return { jdText: raw, sourceUrl: null, resolvedFromUrl: false, sourceTitle: '' };
+  }
+
+  const extracted = await extractJobTextFromUrl(raw);
+  if (!extracted.text || extracted.text.length < 50) {
+    throw new Error('Could not extract JD text from URL');
+  }
+
+  return {
+    jdText: extracted.text,
+    sourceUrl: extracted.finalUrl || raw,
+    resolvedFromUrl: true,
+    sourceTitle: extracted.title || '',
+  };
+}
+
+function buildClaudeSystemPrompt(selectedBlocks) {
+  return [
+    '# Career-Ops Evaluation',
+    '',
+    'You are evaluating one job description for a real user. Answer in English only.',
+    'Do not ask questions.',
+    'The UI has already chosen the blocks to run. Do not change the selection.',
+    'Do not invent facts, metrics, or company details.',
+    'If a detail cannot be verified from the provided JD or candidate context, say "unknown".',
+    'Return ONLY valid JSON with the shape:',
+    '{ "metadata": { "company": string, "role": string, "archetype": string, "score": number, "legitimacy": string, "blocksExecuted": string[], "tokenEstimate": number }, "blocks": { ... } }',
+    `Selected blocks: ${selectedBlocks.join(', ')}`,
+    '',
+    'Use the candidate context that is already provided in the user prompt.',
+    'Do not call tools or attempt to read files.',
+    '',
+    'Block instructions:',
+    '- A) Role Summary: identify archetype, domain, function, seniority, remote status, team size, and a one-line TL;DR.',
+    '- B) CV Match: map each JD requirement to evidence from the candidate context and list gaps with mitigation.',
+    '- C) Level & Strategy: infer the level, explain how to position the candidate honestly, and include a downlevel fallback plan.',
+    '- D) Comp & Demand: assess compensation and market demand using the provided context; if no data exists, say so.',
+    '- E) Personalization Plan: list concrete CV and LinkedIn changes with reasons.',
+    '- F) Interview Stories: provide STAR stories mapped to the JD and one recommended case study.',
+    '- G) Posting Legitimacy: assess whether the posting looks real, active, or suspicious using the JD text and available context.',
+  ].join('\n');
+}
+
+function buildClaudeUserPrompt({ jdText, company, role, sourceUrl, candidateContext }) {
+  return [
+    'Evaluate the job description below and return JSON only.',
+    '',
+    `Company hint: ${company || 'unknown'}`,
+    `Role hint: ${role || 'unknown'}`,
+    `Source URL: ${sourceUrl || 'unknown'}`,
+    '',
+    'Candidate context:',
+    candidateContext.trim(),
+    '',
+    'Job description:',
+    jdText.trim(),
+  ].join('\n');
+}
+
+function parseClaudeJson(output) {
+  const text = String(output || '').trim();
+  const fencedMatch = text.match(/```json\s*([\s\S]*?)```/i);
+  const candidateText = fencedMatch ? fencedMatch[1] : text;
+  const first = candidateText.indexOf('{');
+  const last = candidateText.lastIndexOf('}');
+  const jsonText = first >= 0 && last >= first ? candidateText.slice(first, last + 1) : candidateText;
+  return JSON.parse(jsonText);
+}
+
+function normalizeEvaluationShape(result, selectedBlocks) {
+  const metadata = result?.metadata || {};
+  const blocks = result?.blocks || {};
+  const scoreValue = Number(metadata.score);
+  const tokenEstimateValue = Number(metadata.tokenEstimate);
+  return {
+    metadata: {
+      company: metadata.company || 'Unknown Company',
+      role: metadata.role || 'Unknown Role',
+      archetype: metadata.archetype || 'General AI Role',
+      score: Number.isFinite(scoreValue) ? scoreValue : null,
+      legitimacy: metadata.legitimacy || 'Proceed with Caution',
+      blocksExecuted: Array.isArray(metadata.blocksExecuted) ? metadata.blocksExecuted : selectedBlocks,
+      tokenEstimate: Number.isFinite(tokenEstimateValue) ? tokenEstimateValue : null,
+    },
+    blocks,
+  };
+}
+
+async function runClaudeEvaluation({ jdText, company, role, blocks, sourceUrl }) {
+  const [cvMd, cvBrief, profileYml, profileMd, articleDigest] = await Promise.all([
+    readOptionalText(resolve(BASE, 'cv.md')),
+    readOptionalText(resolve(BASE, 'cv-brief.md')),
+    readOptionalText(resolve(BASE, 'config', 'profile.yml')),
+    readOptionalText(resolve(BASE, 'modes', '_profile.md')),
+    readOptionalText(resolve(BASE, 'article-digest.md')),
+  ]);
+
+  const systemPrompt = buildClaudeSystemPrompt(blocks);
+  const candidateContext = [
+    '## cv.md',
+    cvMd || '(missing)',
+    '',
+    '## cv-brief.md',
+    cvBrief || '(missing)',
+    '',
+    '## config/profile.yml',
+    profileYml || '(missing)',
+    '',
+    '## modes/_profile.md',
+    profileMd || '(missing)',
+    '',
+    '## article-digest.md',
+    articleDigest || '(missing or unavailable)',
+  ].join('\n');
+  const userPrompt = buildClaudeUserPrompt({
+    jdText,
+    company,
+    role,
+    sourceUrl,
+    candidateContext,
+  });
+  const systemPath = resolve(tmpdir(), `career-ops-system-${Date.now()}.md`);
+  const timeoutMs = 120_000;
+
+  await writeFile(systemPath, systemPrompt, 'utf-8');
+
+  try {
+    const result = await new Promise((resolvePromise, rejectPromise) => {
+      const proc = spawn('claude', [
+        '-p',
+        '--tools',
+        '',
+        '--dangerously-skip-permissions',
+        '--append-system-prompt-file',
+        systemPath,
+        userPrompt,
+      ], {
+        cwd: BASE,
+        stdio: ['pipe', 'pipe', 'pipe'],
+        env: process.env,
+      });
+
+      let stdout = '';
+      let stderr = '';
+      let settled = false;
+      const finish = (fn) => (value) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        fn(value);
+      };
+      const resolveOnce = finish(resolvePromise);
+      const rejectOnce = finish(rejectPromise);
+      const timer = setTimeout(() => {
+        try {
+          proc.kill('SIGKILL');
+        } catch {}
+        rejectOnce(new Error(`Claude evaluation timed out after ${timeoutMs / 1000}s`));
+      }, timeoutMs);
+
+      proc.stdout.on('data', data => { stdout += data.toString(); });
+      proc.stderr.on('data', data => { stderr += data.toString(); });
+      proc.on('error', rejectOnce);
+      proc.on('close', code => {
+        if (settled) return;
+        if (code !== 0) {
+          rejectOnce(new Error(stderr.trim() || `claude exited with code ${code}`));
+          return;
+        }
+        try {
+          resolveOnce(parseClaudeJson(stdout));
+        } catch (parseError) {
+          rejectOnce(new Error(`Claude output was not valid JSON: ${parseError.message}`));
+        }
+      });
+    });
+
+    return normalizeEvaluationShape(result, blocks);
+  } finally {
+    await unlink(systemPath).catch(() => {});
+  }
+}
+
+async function saveEvaluationReport(result, { company, role, sourceUrl }) {
+  const reportNum = await getNextReportNumber();
+  const date = new Date().toISOString().split('T')[0];
+  const slug = slugify(company);
+  const filename = `${reportNum}-${slug}-${date}.md`;
+  const filepath = resolve(REPORTS_DIR, filename);
+
+  await mkdir(REPORTS_DIR, { recursive: true });
+
+  const blocks = result.blocks || {};
+  const metadata = result.metadata || {};
+  const score = typeof metadata.score === 'number' ? metadata.score : 0;
+  const legitimacy = metadata.legitimacy || 'Proceed with Caution';
+
+  const markdown = `# Evaluation: ${company || 'Unknown'} — ${role || 'Unknown Role'}
+
+**Date:** ${date}
+**Archetype:** ${metadata.archetype || 'General AI Role'}
+**Score:** ${score.toFixed(1)}/5
+**Legitimacy:** ${legitimacy}
+**URL:** ${sourceUrl || 'unknown'}
+**PDF:** Pending
+
+---
+
+${Object.entries(blocks).map(([block, content]) => {
+    const blockName = {
+      A: 'Role Summary',
+      B: 'CV Match',
+      C: 'Level & Strategy',
+      D: 'Comp & Demand',
+      E: 'Personalization Plan',
+      F: 'Interview Stories',
+      G: 'Posting Legitimacy',
+    }[block] || block;
+
+    const rendered = typeof content === 'string' ? content : JSON.stringify(content, null, 2);
+    return `## ${block}) ${blockName}\n\n${rendered}\n`;
+  }).join('\n')}
+
+---
+
+**Keywords:** ${extractKeywords(blocks).join(', ')}
+`;
+
+  await writeFile(filepath, markdown, 'utf-8');
+
+  return {
+    success: true,
+    reportPath: filepath,
+    reportNumber: reportNum,
+    filename,
+  };
+}
+
+function extractKeywords(reportData) {
+  const keywords = new Set();
+  const text = JSON.stringify(reportData).toLowerCase();
+  const tech = ['typescript', 'nodejs', 'python', 'go', 'aws', 'kubernetes', 'postgres', 'redis', 'payment', 'crypto', 'distributed', 'operations', 'platform'];
+  tech.forEach(t => {
+    if (text.includes(t)) keywords.add(t);
+  });
+  return Array.from(keywords).slice(0, 20);
+}
+
 /**
  * Simple router
  */
@@ -496,48 +853,62 @@ async function handleRequest(req, res) {
           return;
         }
 
-        // Extract company and role from JD
+        const selectedBlocks = Array.isArray(blocks) && blocks.length > 0 ? blocks : ['A', 'B'];
+        const resolved = await resolveEvaluationInput(jd);
+        const jdText = resolved.jdText;
+        const lines = jdText.split('\n').map(l => l.trim()).filter(Boolean);
+
         let company = 'Unknown Company';
         let role = 'Unknown Role';
-
-        // Split into lines for easier parsing
-        const lines = jd.split('\n').map(l => l.trim()).filter(l => l);
 
         lines.forEach(line => {
           const lowerLine = line.toLowerCase();
           if (lowerLine.startsWith('role:') || lowerLine.startsWith('position:') || lowerLine.startsWith('title:')) {
-            role = line.split(':')[1].trim();
+            role = line.split(':').slice(1).join(':').trim();
           }
           if (lowerLine.startsWith('company:') || lowerLine.startsWith('employer:')) {
-            company = line.split(':')[1].trim();
+            company = line.split(':').slice(1).join(':').trim();
           }
         });
 
-        // Fallback: if still unknown, try to find reasonable defaults from content
-        if (role === 'Unknown Role' && lines.length > 0) {
-          const titleLine = lines.find(l => /^[A-Z].*(?:Engineer|Manager|Lead|Director|Officer|Architect)/i.test(l));
-          if (titleLine) role = titleLine;
+        if (role === 'Unknown Role') {
+          role = resolved.sourceTitle || role;
         }
 
-        if (company === 'Unknown Company' && lines.length > 1) {
-          const compLine = lines.find(l => /^[A-Z].*(?:Inc|Co|Corp|LLC|Labs|AI)/.test(l));
-          if (compLine) company = compLine;
+        if (company === 'Unknown Company' && resolved.sourceUrl) {
+          try {
+            company = new URL(resolved.sourceUrl).hostname.replace(/^www\./, '').split('.')[0];
+          } catch {}
         }
 
-        // Call evaluation engine (NO resume generation here)
-        const result = await evaluate({
-          blocks: blocks || ['A', 'B'],
-          jd,
-          company,
-          role,
-          saveReport: saveReport !== false,
-          saveTracker: false
-        });
+        let result;
+        try {
+          result = await runClaudeEvaluation({
+            jdText,
+            company,
+            role,
+            blocks: selectedBlocks,
+            sourceUrl: resolved.sourceUrl || (looksLikeUrl(jd) ? jd : null),
+          });
+        } catch (claudeError) {
+          console.warn('[evaluate] Claude evaluation failed, falling back to local engine:', claudeError.message);
+          const fallback = await evaluate({
+            blocks: selectedBlocks,
+            jd: jdText,
+            company,
+            role,
+            saveReport: false,
+            saveTracker: false
+          });
+          result = normalizeEvaluationShape(fallback, selectedBlocks);
+        }
 
-        if (result.error) {
-          res.writeHead(500, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: result.error }));
-          return;
+        if (saveReport !== false) {
+          result.metadata.report = await saveEvaluationReport(result, {
+            company: result.metadata.company || company,
+            role: result.metadata.role || role,
+            sourceUrl: resolved.sourceUrl || (looksLikeUrl(jd) ? jd : null),
+          });
         }
 
         res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -874,7 +1245,7 @@ async function handleRequest(req, res) {
           candidateId,
           url,
           action: 'switch-to-evaluate',
-          instruction: 'Switched to Evaluate tab with URL pre-filled. Select evaluation blocks and click Evaluate.'
+          instruction: 'Switched to Evaluate tab with JD pre-filled. Select evaluation blocks and click Evaluate with Claude.'
         }));
       } catch (error) {
         res.writeHead(500, { 'Content-Type': 'application/json' });
@@ -890,33 +1261,46 @@ async function handleRequest(req, res) {
     req.on('data', chunk => { body += chunk.toString(); });
     req.on('end', async () => {
       try {
-        const { url, candidateId } = JSON.parse(body);
-        if (!url || !candidateId) {
+        const { url, candidateId, jd } = JSON.parse(body);
+        const input = jd || url;
+        if (!input || !candidateId) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: 'URL and candidateId required' }));
+          res.end(JSON.stringify({ error: 'URL/JD and candidateId required' }));
           return;
         }
 
-        // Call evaluation engine to generate report
-        const result = await evaluate({
-          blocks: ['A', 'B', 'C', 'D', 'E', 'F', 'G'],
-          url,
-          candidateId,
-          saveReport: true,
-          saveTracker: true
+        const selectedBlocks = ['A', 'B', 'C', 'D', 'E', 'F', 'G'];
+        const resolved = await resolveEvaluationInput(input);
+        const result = await runClaudeEvaluation({
+          jdText: resolved.jdText,
+          company: 'Unknown Company',
+          role: 'Unknown Role',
+          blocks: selectedBlocks,
+          sourceUrl: resolved.sourceUrl || (looksLikeUrl(input) ? input : null),
+        }).catch(async (claudeError) => {
+          console.warn('[generate-report] Claude evaluation failed, falling back to local engine:', claudeError.message);
+          const fallback = await evaluate({
+            blocks: selectedBlocks,
+            jd: resolved.jdText,
+            company: 'Unknown Company',
+            role: 'Unknown Role',
+            saveReport: false,
+            saveTracker: false
+          });
+          return normalizeEvaluationShape(fallback, selectedBlocks);
         });
 
-        if (result.error) {
-          res.writeHead(500, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: result.error }));
-          return;
-        }
+        result.metadata.report = await saveEvaluationReport(result, {
+          company: result.metadata.company,
+          role: result.metadata.role,
+          sourceUrl: resolved.sourceUrl || (looksLikeUrl(input) ? input : null),
+        });
 
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({
           success: true,
           message: 'Report generated successfully',
-          reportPath: result.reportPath
+          reportPath: result.metadata.report?.reportPath || null
         }));
       } catch (error) {
         res.writeHead(500, { 'Content-Type': 'application/json' });
@@ -1380,7 +1764,7 @@ function buildIndexTemplate(files) {
         </div>
       </div>
 
-      <button id="evaluateBtn" onclick="runEvaluation()">Evaluate (A-B)</button>
+      <button id="evaluateBtn" onclick="runEvaluation()">Evaluate with Claude</button>
       <div id="status" class="status"></div>
 
       <!-- Evaluation results (hidden until after evaluation) -->
@@ -1464,10 +1848,10 @@ function buildIndexTemplate(files) {
       // Update button label
       const btn = document.getElementById('evaluateBtn');
       if (selected.length === 0) {
-        btn.textContent = 'Evaluate';
+        btn.textContent = 'Evaluate with Claude';
         btn.disabled = true;
       } else {
-        btn.textContent = \`Evaluate (\${selected.join('-')})\`;
+        btn.textContent = \`Evaluate with Claude (\${selected.join('-')})\`;
         btn.disabled = false;
       }
     }
@@ -1489,7 +1873,7 @@ function buildIndexTemplate(files) {
 
       const btn = document.getElementById('evaluateBtn');
       btn.disabled = true;
-      btn.textContent = '⏳ Evaluating...';
+      btn.textContent = '⏳ Evaluating with Claude...';
       setStatus('');
 
       try {
@@ -1523,41 +1907,136 @@ function buildIndexTemplate(files) {
         setStatus('✗ Error: ' + error.message, 'error');
       } finally {
         btn.disabled = false;
-        btn.textContent = 'Evaluate (A-B)';
+        updateTokens();
       }
     }
 
     function formatReportHtml(result) {
       const { metadata, blocks } = result;
+      const normalizedBlocks = {
+        A: blocks.A || blocks.A_role_summary || blocks.role_summary || blocks.a,
+        B: blocks.B || blocks.B_cv_match || blocks.cv_match || blocks.b,
+      };
+
+      function escapeHtml(value) {
+        return String(value ?? '')
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;')
+          .replace(/'/g, '&#39;');
+      }
+
+      function renderText(value) {
+        if (value == null) return '';
+        if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+          return escapeHtml(value).split(String.fromCharCode(10)).join('<br>');
+        }
+        if (Array.isArray(value)) {
+          return value.map(item => '<li>' + renderText(item) + '</li>').join('');
+        }
+        if (typeof value === 'object') {
+          const entries = Object.entries(value);
+          if (entries.length === 0) return '';
+          return '<ul style="margin: 8px 0 8px 18px; padding-left: 18px;">' +
+            entries.map(([key, val]) => '<li><strong>' + escapeHtml(key) + ':</strong> ' + renderText(val) + '</li>').join('') +
+          '</ul>';
+        }
+        return escapeHtml(String(value));
+      }
+
+      function renderBlockA(block) {
+        if (!block) return '';
+        if (typeof block === 'string') {
+          return '<p>' + escapeHtml(block) + '</p>';
+        }
+
+        const parts = [];
+        if (block.tldr || block.summary || block.assessment) {
+          parts.push('<p>' + escapeHtml(block.tldr || block.summary || block.assessment) + '</p>');
+        }
+        if (block.table && typeof block.table === 'object') {
+          parts.push('<ul style="margin: 8px 0 8px 18px; padding-left: 18px;">' +
+            Object.entries(block.table).map(([k, v]) => '<li><strong>' + escapeHtml(k) + ':</strong> ' + escapeHtml(v) + '</li>').join('') +
+          '</ul>');
+        } else {
+          Object.entries(block).forEach(([key, val]) => {
+            if (['title', 'tldr', 'summary', 'assessment'].includes(key)) return;
+            parts.push('<p><strong>' + escapeHtml(key) + ':</strong> ' + renderText(val) + '</p>');
+          });
+        }
+        return parts.join('');
+      }
+
+      function renderBlockB(block) {
+        if (!block) return '';
+        if (typeof block === 'string') {
+          return '<p>' + escapeHtml(block) + '</p>';
+        }
+
+        const parts = [];
+        if (Array.isArray(block.strengths) && block.strengths.length > 0) {
+          parts.push('<h5 style="margin: 12px 0 6px;">Strengths</h5>');
+          parts.push('<ul style="margin: 8px 0 8px 18px; padding-left: 18px;">' +
+            block.strengths.map(item => {
+              if (typeof item === 'string') return '<li>' + escapeHtml(item) + '</li>';
+              const req = item.requirement || item.gap || item.match || 'Item';
+              const evidence = item.cv_evidence || item.evidence || item.cv_match || '';
+              const level = item.match_level || item.strength || item.likelihood_of_concern || '';
+              return '<li><strong>' + escapeHtml(req) + ':</strong> ' + escapeHtml(evidence) + (level ? ' <em>(' + escapeHtml(level) + ')</em>' : '') + '</li>';
+            }).join('') +
+          '</ul>');
+        }
+
+        if (Array.isArray(block.requirements_mapped) && block.requirements_mapped.length > 0) {
+          parts.push('<h5 style="margin: 12px 0 6px;">Requirements</h5>');
+          parts.push('<ul style="margin: 8px 0 8px 18px; padding-left: 18px;">' +
+            block.requirements_mapped.map(item => {
+              const req = item.requirement || 'Requirement';
+              const match = item.cv_match || item.specificity || item.match_level || '';
+              return '<li><strong>' + escapeHtml(req) + ':</strong> ' + escapeHtml(match) + '</li>';
+            }).join('') +
+          '</ul>');
+        }
+
+        if (Array.isArray(block.gaps) && block.gaps.length > 0) {
+          parts.push('<h5 style="margin: 12px 0 6px;">Gaps</h5>');
+          parts.push('<ul style="margin: 8px 0 8px 18px; padding-left: 18px;">' +
+            block.gaps.map(item => {
+              if (typeof item === 'string') return '<li>✗ ' + escapeHtml(item) + '</li>';
+              const gap = item.gap || item.requirement || 'Gap';
+              const mitigation = item.mitigation || item.recommendation || item.strategy || '';
+              return '<li>✗ <strong>' + escapeHtml(gap) + ':</strong> ' + escapeHtml(mitigation) + '</li>';
+            }).join('') +
+          '</ul>');
+        }
+
+        Object.entries(block).forEach(([key, val]) => {
+          if (['title', 'strengths', 'requirements_mapped', 'gaps'].includes(key)) return;
+          if (Array.isArray(val) && val.length === 0) return;
+          if (typeof val === 'object' && val && Object.keys(val).length === 0) return;
+          parts.push('<p><strong>' + escapeHtml(key) + ':</strong> ' + renderText(val) + '</p>');
+        });
+
+        return parts.join('');
+      }
+
       let html = \`<h3>\${metadata.company} - \${metadata.role}</h3>\`;
       html += \`<p><strong>Score:</strong> \${metadata.score != null && typeof metadata.score.toFixed === 'function' ? metadata.score.toFixed(1) : 'N/A'}/5</p>\`;
+      html += \`<p><strong>Archetype:</strong> \${metadata.archetype || 'N/A'}</p>\`;
+      html += \`<p><strong>Legitimacy:</strong> \${metadata.legitimacy || 'N/A'}</p>\`;
       html += \`<p><strong>Blocks executed:</strong> \${Array.isArray(metadata.blocksExecuted) ? metadata.blocksExecuted.join(', ') : 'None'}</p>\`;
       html += \`<p><strong>Tokens used:</strong> \${metadata.tokenEstimate || 'N/A'}</p>\`;
       html += '<hr style="margin: 15px 0; border: none; border-top: 1px solid #ddd;">';
 
-      if (blocks.A) {
+      if (normalizedBlocks.A) {
         html += '<h4 style="margin-top: 10px;">A) Role Summary</h4>';
-        const summary = blocks.A.summary || blocks.A.level || '';
-        html += '<p>' + (typeof summary === 'string' ? summary : JSON.stringify(summary)).substring(0, 300) + '...</p>';
+        html += renderBlockA(normalizedBlocks.A);
       }
 
-      if (blocks.B) {
+      if (normalizedBlocks.B) {
         html += '<h4 style="margin-top: 10px;">B) CV Match</h4>';
-        if (blocks.B.matches && Array.isArray(blocks.B.matches)) {
-          html += \`<p><strong>Matches:</strong> \${blocks.B.matches.length}</p>\`;
-          blocks.B.matches.slice(0, 3).forEach(m => {
-            html += \`<li>✓ \${m && m.requirement ? m.requirement.substring(0, 80) : 'Match'}</li>\`;
-          });
-        }
-        if (blocks.B.gaps && Array.isArray(blocks.B.gaps) && blocks.B.gaps.length > 0) {
-          html += \`<p><strong>Gaps:</strong> \${blocks.B.gaps.length}</p>\`;
-          blocks.B.gaps.slice(0, 2).forEach(g => {
-            html += \`<li>✗ \${g && typeof g.substring === 'function' ? g.substring(0, 80) : g}</li>\`;
-          });
-        }
-        if (blocks.B.matchPercentage !== undefined) {
-          html += \`<p><strong>Match:</strong> \${Math.round(blocks.B.matchPercentage * 100)}%</p>\`;
-        }
+        html += renderBlockB(normalizedBlocks.B);
       }
       return html;
     }
@@ -1796,7 +2275,7 @@ function buildIndexTemplate(files) {
             \${pageCandidates.map((c) => {
               const isSelected = selectedCandidate && selectedCandidate.id === c.id;
               const locationText = getQueueLocationText(c);
-              const descriptionHtml = escapeHtml(c.description || '(No description)').replace(/\\n/g, '<br>');
+              const descriptionHtml = escapeHtml(c.description || '(No description)').split(String.fromCharCode(10)).join('<br>');
               return \`
               <tr data-candidate-id="\${c.id}" class="queue-item" onclick="selectCandidate('\${c.id}')" style="border-bottom: 1px solid var(--border-color); transition: background 0.2s; cursor: pointer; \${isSelected ? 'background: rgba(37, 99, 235, 0.05);' : ''}" onmouseover="this.style.background='var(--bg-secondary)'" onmouseout="this.style.background='\${isSelected ? 'rgba(37, 99, 235, 0.05)' : 'transparent'}'">
                 <td style="padding: 10px;">
@@ -1904,33 +2383,15 @@ function buildIndexTemplate(files) {
         return;
       }
 
-      try {
-        const response = await fetch('/api/generate', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            url: selectedCandidate.url,
-            candidateId: selectedCandidate.id
-          })
-        });
+      document.getElementById('jdInput').value = selectedCandidate.description || selectedCandidate.url;
 
-        if (!response.ok) throw new Error('Generation failed');
+      const statusMsg = '✓ Prepared for Evaluate tab. JD pre-filled: ' + selectedCandidate.company + ' — ' + selectedCandidate.role;
+      document.getElementById('generateStatus').innerHTML = statusMsg;
+      document.getElementById('generateStatus').className = 'status success';
 
-        await response.json();
-
-        document.getElementById('jdInput').value = selectedCandidate.url;
-
-        const statusMsg = '✓ Prepared for Evaluate tab. URL pre-filled: ' + selectedCandidate.company + ' — ' + selectedCandidate.role;
-        document.getElementById('generateStatus').innerHTML = statusMsg;
-        document.getElementById('generateStatus').className = 'status success';
-
-        setTimeout(() => {
-          switchTab('evaluate');
-        }, 500);
-      } catch (error) {
-        document.getElementById('generateStatus').innerHTML = '✗ ' + error.message;
-        document.getElementById('generateStatus').className = 'status error';
-      }
+      setTimeout(() => {
+        switchTab('evaluate');
+      }, 500);
     }
 
     async function generateReport(candidateId) {
