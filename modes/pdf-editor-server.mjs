@@ -2615,6 +2615,14 @@ function buildEditorTemplate(content, id, reportMd = null, cvStyles = '') {
       cursor: not-allowed;
     }
 
+    .btn-report {
+      background: var(--primary-light);
+      color: var(--bg-primary);
+      border: 1px solid var(--primary);
+    }
+    .btn-report:hover { background: var(--primary); }
+    .btn-report.active { background: var(--success); }
+
     .status {
       margin-left: auto;
       font-size: 12px;
@@ -2623,17 +2631,29 @@ function buildEditorTemplate(content, id, reportMd = null, cvStyles = '') {
 
     .split-container {
       display: flex;
+      flex-direction: column;
       height: calc(100vh - 60px);
       gap: 0;
       width: 100%;
     }
 
     .report-panel {
-      width: 50%;
+      width: 100%;
       flex-shrink: 0;
       background: var(--bg-primary);
-      border-right: 1px solid var(--border-color);
+      border-bottom: 1px solid var(--border-color);
       overflow-y: auto;
+      padding: 20px;
+      max-height: 0;
+      opacity: 0;
+      transition: max-height 0.3s ease, opacity 0.3s ease, padding 0.3s ease;
+      visibility: hidden;
+    }
+
+    .report-panel.open {
+      max-height: 400px;
+      opacity: 1;
+      visibility: visible;
       padding: 20px;
     }
 
@@ -2715,15 +2735,21 @@ function buildEditorTemplate(content, id, reportMd = null, cvStyles = '') {
     .cv-container {
       flex: 1;
       background: var(--bg-primary);
-      margin: 20px;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-      border-radius: 4px;
+      margin: 0;
+      box-shadow: none;
+      border-radius: 0;
       overflow-y: auto;
       overflow-x: hidden;
+      display: flex;
+      justify-content: center;
+      padding: 10px;
     }
 
     .cv-content {
-      padding: 40px;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
     }
 
     .cv-content.editing {
@@ -2734,9 +2760,14 @@ function buildEditorTemplate(content, id, reportMd = null, cvStyles = '') {
 
     /* Override page layout for editor context */
     .cv-content .page {
-      max-width: none;
-      margin: 0;
-      padding: 0;
+      max-width: 8.5in;
+      width: 90%;
+      min-height: 11in;
+      margin: 10px auto;
+      padding: 0.5in 0.4in;
+      box-sizing: border-box;
+      break-after: page;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
     }
 
     /* Ensure embedded images and media work */
@@ -2755,6 +2786,7 @@ function buildEditorTemplate(content, id, reportMd = null, cvStyles = '') {
 
     <div class="cv-panel">
       <div class="toolbar">
+        <button class="btn-report" id="reportBtn">📋 Show Report</button>
         <button class="btn-edit" id="editBtn">✏️ Edit</button>
         <button class="btn-export" id="exportBtn">📥 Export PDF</button>
         <span class="status" id="status">Ready</span>
@@ -2770,11 +2802,21 @@ function buildEditorTemplate(content, id, reportMd = null, cvStyles = '') {
 
   <script>
     const cvStyles = \`${cvStyles.replace(/`/g, '\\`')}\`;
+    const reportBtn = document.getElementById('reportBtn');
+    const reportPanel = document.querySelector('.report-panel');
     const editBtn = document.getElementById('editBtn');
     const exportBtn = document.getElementById('exportBtn');
     const cvContent = document.getElementById('cvContent');
     const status = document.getElementById('status');
     let isEditing = false;
+    let reportOpen = false;
+
+    reportBtn.addEventListener('click', () => {
+      reportOpen = !reportOpen;
+      reportPanel.classList.toggle('open', reportOpen);
+      reportBtn.textContent = reportOpen ? '📋 Hide Report' : '📋 Show Report';
+      reportBtn.classList.toggle('active', reportOpen);
+    });
 
     editBtn.addEventListener('click', () => {
       isEditing = !isEditing;
