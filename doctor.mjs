@@ -43,7 +43,13 @@ function checkDependencies() {
 
 async function checkPlaywright() {
   try {
-    const { chromium } = await import('playwright');
+    const timeoutMs = 5000;
+    const { chromium } = await Promise.race([
+      import('playwright'),
+      new Promise((_, reject) => {
+        setTimeout(() => reject(new Error(`timed out after ${timeoutMs}ms`)), timeoutMs);
+      }),
+    ]);
     const execPath = chromium.executablePath();
     if (existsSync(execPath)) {
       return { pass: true, label: 'Playwright chromium installed' };
@@ -53,10 +59,10 @@ async function checkPlaywright() {
       label: 'Playwright chromium not installed',
       fix: 'Run: npx playwright install chromium',
     };
-  } catch {
+  } catch (err) {
     return {
       pass: false,
-      label: 'Playwright chromium not installed',
+      label: `Playwright chromium not ready (${err.message})`,
       fix: 'Run: npx playwright install chromium',
     };
   }

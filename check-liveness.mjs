@@ -14,7 +14,6 @@
  * Exit code: 0 if all active, 1 if any expired or uncertain
  */
 
-import { chromium } from 'playwright';
 import { readFile } from 'fs/promises';
 import { classifyLiveness } from './liveness-core.mjs';
 
@@ -85,6 +84,8 @@ async function main() {
   } else {
     urls = args;
   }
+
+  const { chromium } = await import('playwright');
 
   console.log(`Checking ${urls.length} URL(s)...\n`);
 

@@ -12,13 +12,18 @@
  */
 
 import { execSync, execFileSync } from 'child_process';
-import { readFileSync, existsSync, readdirSync } from 'fs';
+import { readFileSync, existsSync, readdirSync, mkdirSync } from 'fs';
 import { join, dirname } from 'path';
+import { tmpdir } from 'os';
 import { fileURLToPath, pathToFileURL } from 'url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = __dirname;
 const QUICK = process.argv.includes('--quick');
+const GO_CACHE = join(tmpdir(), 'career-ops-go-build-cache');
+const GO_MOD_CACHE = join(tmpdir(), 'career-ops-go-mod-cache');
+mkdirSync(GO_CACHE, { recursive: true });
+mkdirSync(GO_MOD_CACHE, { recursive: true });
 
 let passed = 0;
 let failed = 0;
@@ -122,7 +127,10 @@ try {
 
 if (!QUICK) {
   console.log('\n4. Dashboard build');
-  const goBuild = run('cd dashboard && go build -o /tmp/career-dashboard-test . 2>&1');
+  const goBuild = run('go', ['build', '-o', join(tmpdir(), 'career-dashboard-test'), '.'], {
+    cwd: join(ROOT, 'dashboard'),
+    env: { ...process.env, GOCACHE: GO_CACHE, GOMODCACHE: GO_MOD_CACHE },
+  });
   if (goBuild !== null) {
     pass('Dashboard compiles');
   } else {
@@ -240,7 +248,7 @@ if (!absPathResult) {
 console.log('\n8. Mode file integrity');
 
 const expectedModes = [
-  '_shared.md', '_profile.template.md', 'oferta.md', 'pdf.md', 'scan.md',
+  '_shared.md', '_profile.template.md', 'oferta.md', 'pdf.md', 'editor.md', 'scan.md',
   'batch.md', 'apply.md', 'auto-pipeline.md', 'contacto.md', 'deep.md',
   'ofertas.md', 'pipeline.md', 'project.md', 'tracker.md', 'training.md',
 ];

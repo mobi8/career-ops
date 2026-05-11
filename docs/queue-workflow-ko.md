@@ -2,7 +2,7 @@
 
 ## 목표
 
-`/Users/lewis/Desktop/agent`에서 배치로 수집한 공고 중 점수 60점 이상인 항목만 골라서 `/Users/lewis/Desktop/career/career-ops`의 CV Editor로 불러온다.
+`../agent`에서 배치로 수집한 공고 중 점수 60점 이상인 항목만 골라서 이 프로젝트의 CV Editor로 불러온다.
 
 Editor 화면에서는:
 
@@ -114,9 +114,9 @@ Editor 화면에서는:
 
 ## 전체 흐름
 
-1. `/Users/lewis/Desktop/agent`에서 배치 실행
+1. `../agent`에서 배치 실행
 2. 60점 이상 후보를 queue 파일에 저장
-3. `/Users/lewis/Desktop/career/career-ops`가 queue 파일을 읽음
+3. `career-ops`가 queue 파일을 읽음
 4. CV Editor에서 후보 목록 표시
 5. 후보를 클릭하면 description이 왼쪽 패널에 표시됨
 6. 오른쪽 패널에서 CV를 수정
@@ -135,20 +135,20 @@ Editor 화면에서는:
 
 아래 파일에서 queue export를 추가하는 쪽이 자연스럽다.
 
-- [`/Users/lewis/Desktop/agent/src/watch/scraper.py`](/Users/lewis/Desktop/agent/src/watch/scraper.py)
-- [`/Users/lewis/Desktop/agent/src/utils/models.py`](/Users/lewis/Desktop/agent/src/utils/models.py)
-- [`/Users/lewis/Desktop/agent/src/utils/db.py`](/Users/lewis/Desktop/agent/src/utils/db.py)
-- [`/Users/lewis/Desktop/agent/src/api/app.py`](/Users/lewis/Desktop/agent/src/api/app.py)
-- 필요하면 [`/Users/lewis/Desktop/agent/src/services/career_bridge.py`](/Users/lewis/Desktop/agent/src/services/career_bridge.py)
+- `../agent/src/watch/scraper.py`
+- `../agent/src/utils/models.py`
+- `../agent/src/utils/db.py`
+- `../agent/src/api/app.py`
+- 필요하면 `../agent/src/services/career_bridge.py`
 
 ### `career-ops`
 
 아래 파일에서 reader, UI, 실행 라우트를 추가하는 쪽이 자연스럽다.
 
-- [`/Users/lewis/Desktop/career/career-ops/modes/pdf-editor-server.mjs`](/Users/lewis/Desktop/career/career-ops/modes/pdf-editor-server.mjs)
-- [`/Users/lewis/Desktop/career/career-ops/modes/oferta.md`](/Users/lewis/Desktop/career/career-ops/modes/oferta.md)
-- [`/Users/lewis/Desktop/career/career-ops/modes/pdf.md`](/Users/lewis/Desktop/career/career-ops/modes/pdf.md)
-- 필요하면 [`/Users/lewis/Desktop/career/career-ops/evaluation-engine.mjs`](/Users/lewis/Desktop/career/career-ops/evaluation-engine.mjs)
+- `modes/pdf-editor-server.mjs`
+- `modes/oferta.md`
+- `modes/pdf.md`
+- 필요하면 `evaluation-engine.mjs`
 
 ---
 
