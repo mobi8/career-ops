@@ -1,0 +1,58 @@
+# Career-Ops Profile Configuration - Wife
+# Personal data source of truth across all modes.
+
+candidate:
+  full_name: "Wife's Full Name"
+  email: "wife.email@example.com"
+  phone: "+971 XX XXX XXXX"
+  location: "Dubai, UAE"
+  linkedin: "linkedin.com/in/wife-profile/"
+  portfolio_url: ""
+  whatsapp: "available"
+
+target_roles:
+  # Your North Star roles — what you're optimizing for
+  primary:
+    - "Role 1"
+    - "Role 2"
+    - "Role 3"
+  # Archetypes help the evaluation system score fit
+  archetypes:
+    - name: "Archetype 1"
+      level: "Senior/Lead"
+      fit: "primary"
+    - name: "Archetype 2"
+      level: "Senior"
+      fit: "primary"
+
+narrative:
+  # Your professional headline (1 line)
+  headline: "Your Professional Headline"
+  # Your exit story — what makes you unique
+  exit_story: "Your exit story - what makes you unique"
+  # Your top 3-5 superpowers
+  superpowers:
+    - "Superpower 1"
+    - "Superpower 2"
+    - "Superpower 3"
+  # Proof points — projects, articles, case studies with measurable impact
+  proof_points:
+    - name: "Project or achievement 1"
+      url: ""
+      hero_metric: "Key metric or achievement"
+    - name: "Project or achievement 2"
+      url: ""
+      hero_metric: "Key metric or achievement"
+
+compensation:
+  target_range: "AED XXX,XXX - XXX,XXX"
+  currency: "AED"
+  minimum: "AED XXX,XXX"
+  location_flexibility: "Dubai/UAE preferred"
+
+location:
+  country: "United Arab Emirates"
+  city: "Dubai"
+  timezone: "GST (UTC+4)"
+  visa_status: "Current visa status"
+  onsite_availability: "Full-time on-site in Dubai"

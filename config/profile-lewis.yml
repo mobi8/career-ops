@@ -1,0 +1,79 @@
+# Career-Ops Profile Configuration
+# Personal data source of truth across all modes.
+
+candidate:
+  full_name: "Lewis Park"
+  email: "lewispark83@gmail.com"
+  phone: "+971 56 282 4803"
+  location: "Dubai, UAE"
+  linkedin: "linkedin.com/in/park-lewis-b2ba7228/"
+  portfolio_url: "https://lewispark.dev"
+  whatsapp: "available"
+
+target_roles:
+  # Your North Star roles — what you're optimizing for
+  primary:
+    - "Head of Payments"
+    - "Head of Wallet Operations"
+    - "Crypto Payments Manager"
+  # Archetypes help the evaluation system score fit
+  archetypes:
+    - name: "iGaming Account Manager"
+      level: "Senior/Lead"
+      fit: "primary"
+    - name: "iGaming Product Manager"
+      level: "Senior"
+      fit: "primary"
+    - name: "Crypto Payment Operations Lead"
+      level: "Senior/Lead"
+      fit: "primary"
+    - name: "Head of Operations"
+      level: "Director/Lead"
+      fit: "primary"
+    - name: "B2B Operations Manager"
+      level: "Senior"
+      fit: "secondary"
+
+narrative:
+  # Your professional headline (1 line)
+  headline: "Crypto Payments & iGaming Operations Leader"
+  # Your exit story — what makes you unique
+  exit_story: "Stabilized $20M+/month crypto payment flows while orchestrating PSP, compliance, and engineering alignment across regulated multi-brand operators. Translated operational complexity into strategic growth and cost savings."
+  # Your top 3-5 superpowers
+  superpowers:
+    - "High-volume wallet & payment operations at scale ($20M+/month)"
+    - "Cross-functional triage: PSP + Compliance + Engineering alignment"
+    - "RG/KYC governance & transaction monitoring in regulated environments"
+    - "Cost optimization & infrastructure scaling (saved $1M annually)"
+    - "B2B stakeholder management & escalation ownership"
+  # Proof points — projects, articles, case studies with measurable impact
+  proof_points:
+    - name: "NPay.io Wallet Implementation (GGPoker)"
+      url: ""
+      hero_metric: "99.9% uptime across 6 brands, $20M+/month volume, $1M annual savings"
+    - name: "Crypto PSP Launch & Scale"
+      url: ""
+      hero_metric: "Grew BTC/USDT/USDC volume from $0 to $2M/month in 10 months"
+    - name: "Multi-chain Infrastructure"
+      url: ""
+      hero_metric: "Expanded Tron/BSC/Ethereum with BitGo custody integration"
+    - name: "Payment Cost Optimization"
+      url: ""
+      hero_metric: "30% cost reduction + 20% faster merchant integration + 40% support efficiency"
+    - name: "Blockchain Betting MVP (ACTUALAB)"
+      url: ""
+      hero_metric: "Zero wallet outage at launch, standardized CS playbooks for production support"
+
+compensation:
+  target_range: "AED 240K - 300K"    # Monthly 20K-25K
+  currency: "AED"
+  minimum: "AED 200K"                 # Walk-away number
+  location_flexibility: "Dubai/UAE preferred, regional travel acceptable"
+
+location:
+  country: "United Arab Emirates"
+  city: "Dubai"
+  timezone: "GST (UTC+4)"
+  visa_status: "Currently on UAE employment visa"
+  # For remote roles outside your country:
+  onsite_availability: "Full-time on-site in Dubai, regional travel (1-2 weeks/month) acceptable"
