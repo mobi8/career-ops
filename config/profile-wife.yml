@@ -1,58 +1,76 @@
-# Career-Ops Profile Configuration - Wife
+# Career-Ops Profile Configuration - Bobae Jung
 # Personal data source of truth across all modes.
 
 candidate:
-  full_name: "Wife's Full Name"
-  email: "wife.email@example.com"
-  phone: "+971 XX XXX XXXX"
+  full_name: "Bobae Jung"
+  email: "bobaee.jung@gmail.com"
+  phone: "+971 50 294 6618"
   location: "Dubai, UAE"
-  linkedin: "linkedin.com/in/wife-profile/"
+  linkedin: "linkedin.com/in/bobaejung"
   portfolio_url: ""
   whatsapp: "available"
 
 target_roles:
   # Your North Star roles — what you're optimizing for
   primary:
-    - "Role 1"
-    - "Role 2"
-    - "Role 3"
+    - "Operations Manager"
+    - "Supply Chain Manager"
+    - "Product Planning Lead"
+    - "Executive Assistant / Chief of Staff"
   # Archetypes help the evaluation system score fit
   archetypes:
-    - name: "Archetype 1"
+    - name: "Operations Coordinator / Manager"
       level: "Senior/Lead"
       fit: "primary"
-    - name: "Archetype 2"
+    - name: "Supply Chain Specialist"
       level: "Senior"
       fit: "primary"
+    - name: "Product Planning Manager"
+      level: "Senior"
+      fit: "primary"
+    - name: "Executive Assistant / CoS"
+      level: "Senior"
+      fit: "primary"
+    - name: "Business Operations Manager"
+      level: "Senior/Lead"
+      fit: "secondary"
 
 narrative:
   # Your professional headline (1 line)
-  headline: "Your Professional Headline"
+  headline: "Operations & Supply Chain Professional - 13 Years Energy Industry"
   # Your exit story — what makes you unique
-  exit_story: "Your exit story - what makes you unique"
+  exit_story: "Built operational excellence across refinery product planning and supply chain coordination in regulated energy environments. Fluent in translating data into actionable insights and aligning cross-functional teams across headquarters and field operations."
   # Your top 3-5 superpowers
   superpowers:
-    - "Superpower 1"
-    - "Superpower 2"
-    - "Superpower 3"
+    - "Refinery product planning and supply chain optimization at scale"
+    - "Cross-functional coordination: trading, logistics, operations alignment"
+    - "Data-driven operational reporting and KPI analysis for executive decision-making"
+    - "Executive-level communication and governance process management"
+    - "Process improvement and continuous optimization in regulated environments"
   # Proof points — projects, articles, case studies with measurable impact
   proof_points:
-    - name: "Project or achievement 1"
+    - name: "SK Energy Supply Chain Management (2013-2023)"
       url: ""
-      hero_metric: "Key metric or achievement"
-    - name: "Project or achievement 2"
+      hero_metric: "10 years managing refinery product planning, export operations, inventory optimization"
+    - name: "SK Innovation Corporate Office (2023-2025)"
       url: ""
-      hero_metric: "Key metric or achievement"
+      hero_metric: "CEO office support, executive communication, cross-functional program coordination"
+    - name: "Supply Chain Optimization"
+      url: ""
+      hero_metric: "Coordinated demand-supply-stock balancing for stable operations"
+    - name: "Executive Communication & Governance"
+      url: ""
+      hero_metric: "Supported senior leadership alignment across departments"
 
 compensation:
-  target_range: "AED XXX,XXX - XXX,XXX"
+  target_range: "AED 180K - 240K"
   currency: "AED"
-  minimum: "AED XXX,XXX"
-  location_flexibility: "Dubai/UAE preferred"
+  minimum: "AED 160K"
+  location_flexibility: "Dubai/UAE preferred, open to regional opportunities"
 
 location:
   country: "United Arab Emirates"
   city: "Dubai"
   timezone: "GST (UTC+4)"
-  visa_status: "Current visa status"
-  onsite_availability: "Full-time on-site in Dubai"
+  visa_status: "Currently on UAE employment visa"
+  onsite_availability: "Full-time on-site in Dubai, regional travel as needed"
