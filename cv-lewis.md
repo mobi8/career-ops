@@ -5,16 +5,13 @@ LinkedIn: linkedin.com/in/park-lewis-b2ba7228/
 
 ## Professional Summary
 
-Dubai-based fintech operations and product leader building reliable systems from MVP through production. I've led cross-functional teams across engineering, compliance, and operations in regulated environments. I moved to Dubai for long-term impact and am available immediately.
+Operations and product professional in fintech. Built crypto payment systems, wallet infrastructure, and compliance workflows in regulated environments. Based in Dubai.
 
 ## Core Strengths
 
-- 0-to-1 product launch and MVP delivery in fintech and blockchain environments
-- Technical architecture collaboration: designing payment flows, wallet infrastructure, and transaction monitoring systems
-- Cross-functional product leadership across engineering, compliance, operations, and customer support
-- High-volume crypto payment operations and wallet infrastructure in regulated iGaming
-- KYC/AML, KYT, fraud monitoring, and compliance workflow design
-- Product roadmap prioritization, user-facing launch operations, and production incident response
+- Crypto payments and settlement infrastructure: building from 0-1 in regulated environments
+- Payment operations: wallet design, KYC/AML, fraud detection, settlement flows
+- Cross-functional coordination: working across engineering, compliance, and operations teams
 
 ## Professional Experience
 

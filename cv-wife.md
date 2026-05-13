@@ -5,18 +5,13 @@ LinkedIn: linkedin.com/in/bobaejung
 
 ## Professional Summary
 
-Operations and planning professional with 13 years of experience in the energy industry across SK Energy and SK Innovation, specializing in refinery product planning, operational coordination, KPI reporting, and cross-functional stakeholder management. Strong background in supply chain coordination, data-driven decision support, and executive-level communication. Experienced in working between headquarters and operational teams, translating data into structured insights, and contributing to continuous improvement initiatives through reporting and process coordination. Comfortable operating in complex, regulated environments with a focus on clarity, efficiency, and collaboration.
+Operations and planning professional with 13 years in supply chain, product planning, and KPI reporting. Experience with performance analytics, executive reporting, and cross-functional coordination. Based in Dubai.
 
 ## Core Competencies
 
-- Operational & KPI Reporting
-- Process Coordination & Improvement
-- Cross-functional & Stakeholder Management
-- Management & Executive Support
-- Data-driven Decision Support
-- Supply Chain & Product Planning
-- Internal Governance & Documentation
-- Project & Initiative Coordination
+- KPI reporting and performance analytics
+- Supply chain and operations planning
+- Cross-functional coordination and executive support
 
 ## Professional Experience
 

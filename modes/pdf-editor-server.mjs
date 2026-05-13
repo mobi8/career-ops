@@ -1019,6 +1019,36 @@ async function handleRequest(req, res) {
     return;
   }
 
+  // POST /api/save-html
+  if (req.method === 'POST' && pathname === '/api/save-html') {
+    let body = '';
+    req.on('data', chunk => { body += chunk.toString(); });
+    req.on('end', async () => {
+      try {
+        const { filename, html } = JSON.parse(body);
+        if (!filename || !html) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'filename and html required' }));
+          return;
+        }
+        const fs = await import('fs');
+        await fs.promises.mkdir(OUTPUT_HTML_DIR, { recursive: true });
+        const htmlPath = resolve(OUTPUT_HTML_DIR, `${filename}.html`);
+        await fs.promises.writeFile(htmlPath, html, 'utf-8');
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          success: true,
+          path: htmlPath,
+          message: `HTML saved to ${filename}.html`
+        }));
+      } catch (error) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: error.message }));
+      }
+    });
+    return;
+  }
+
   // GET /api/report/:id
   if (req.method === 'GET' && pathname.startsWith('/api/report/')) {
     const id = pathname.replace('/api/report/', '');
@@ -2818,18 +2848,67 @@ function buildEditorTemplate(content, id, reportMd = null, cvStyles = '') {
       reportBtn.classList.toggle('active', reportOpen);
     });
 
-    editBtn.addEventListener('click', () => {
+    editBtn.addEventListener('click', async () => {
       isEditing = !isEditing;
       cvContent.contentEditable = isEditing;
-      editBtn.textContent = isEditing ? '✅ Done' : '✏️ Edit';
+      editBtn.textContent = isEditing ? '✅ Save & Done' : '✏️ Edit';
       editBtn.classList.toggle('active', isEditing);
       cvContent.classList.toggle('editing', isEditing);
 
       if (isEditing) {
         cvContent.focus();
-        status.textContent = 'Editing mode';
+        status.textContent = 'Editing mode — click Save & Done to persist';
       } else {
-        status.textContent = 'Ready';
+        // Save the edited HTML
+        status.textContent = 'Saving...';
+        editBtn.disabled = true;
+
+        try {
+          const resumeContent = cvContent.innerHTML;
+          const htmlDocument = \`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${id}</title>
+  <style>
+    \${cvStyles}
+  </style>
+</head>
+<body>
+\${resumeContent}
+</body>
+</html>\`;
+
+          const response = await fetch('/api/save-html', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              html: htmlDocument,
+              filename: '${id}'
+            })
+          });
+
+          if (!response.ok) {
+            let error = 'Save failed';
+            try {
+              const data = await response.json();
+              error = data.error || error;
+            } catch (_) {}
+            throw new Error(error);
+          }
+
+          status.textContent = '✓ Saved successfully';
+        } catch (error) {
+          status.textContent = '✗ Save failed: ' + error.message;
+          alert('Failed to save: ' + error.message);
+          // Re-enable editing on save failure
+          isEditing = true;
+          cvContent.contentEditable = true;
+          editBtn.textContent = '✅ Save & Done';
+        } finally {
+          editBtn.disabled = false;
+        }
       }
     });
 
@@ -2900,7 +2979,7 @@ function buildEditorTemplate(content, id, reportMd = null, cvStyles = '') {
 
 // Start server
 const server = http.createServer(handleRequest);
-server.listen(port, '127.0.0.1', () => {
+server.listen(port, '0.0.0.0', () => {
   const url = `http://localhost:${port}`;
   console.log(`\n✓ CV Editor server started`);
   console.log(`  URL: ${url}`);
