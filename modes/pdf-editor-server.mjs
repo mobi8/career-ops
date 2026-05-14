@@ -130,8 +130,18 @@ async function generateBasicResume(cvBriefPath, company, timestamp) {
     /* Education */
     .education { font-size: 11px; margin-bottom: 4px; }
 
-    [contenteditable] { outline: 1px dotted transparent; }
-    [contenteditable]:focus { outline: 1px dotted #2c5282; }
+    [contenteditable] {
+      outline: 1px dotted transparent;
+      user-select: text;
+      -webkit-user-select: text;
+      font-family: 'DM Sans', 'Space Grotesk', system-ui, -apple-system, sans-serif;
+      color: inherit;
+    }
+    [contenteditable]:focus {
+      outline: 1px dotted #2c5282;
+      user-select: text;
+      -webkit-user-select: text;
+    }
   </style>
 </head>
 <body contenteditable="true">
@@ -2780,12 +2790,13 @@ function buildEditorTemplate(content, id, reportMd = null, cvStyles = '') {
       display: flex;
       flex-direction: column;
       align-items: center;
+      width: 100%;
+      box-sizing: border-box;
     }
 
     .cv-content.editing {
-      outline: 2px dashed var(--primary);
-      outline-offset: -2px;
-      background: var(--bg-secondary);
+      /* Minimal visual feedback - no layout changes */
+      opacity: 0.98;
     }
 
     /* Override page layout for editor context */
@@ -2850,13 +2861,21 @@ function buildEditorTemplate(content, id, reportMd = null, cvStyles = '') {
 
     editBtn.addEventListener('click', async () => {
       isEditing = !isEditing;
-      cvContent.contentEditable = isEditing;
+      // Use setAttribute for more explicit contenteditable control
+      if (isEditing) {
+        cvContent.setAttribute('contenteditable', 'plaintext-only');
+      } else {
+        cvContent.removeAttribute('contenteditable');
+      }
       editBtn.textContent = isEditing ? '✅ Save & Done' : '✏️ Edit';
       editBtn.classList.toggle('active', isEditing);
       cvContent.classList.toggle('editing', isEditing);
 
       if (isEditing) {
-        cvContent.focus();
+        // Ensure proper focus and allow selection immediately
+        setTimeout(() => {
+          cvContent.focus();
+        }, 0);
         status.textContent = 'Editing mode — click Save & Done to persist';
       } else {
         // Save the edited HTML
@@ -2904,13 +2923,51 @@ function buildEditorTemplate(content, id, reportMd = null, cvStyles = '') {
           alert('Failed to save: ' + error.message);
           // Re-enable editing on save failure
           isEditing = true;
-          cvContent.contentEditable = true;
+          cvContent.setAttribute('contenteditable', 'plaintext-only');
           editBtn.textContent = '✅ Save & Done';
         } finally {
           editBtn.disabled = false;
         }
       }
     });
+
+    // Handle paste to strip formatting and preserve CV font
+    cvContent.addEventListener('paste', (e) => {
+      if (!isEditing) return;
+      e.preventDefault();
+      const text = e.clipboardData.getData('text/plain');
+
+      // Insert plain text while maintaining current font styling
+      const selection = window.getSelection();
+      if (selection.rangeCount === 0) return;
+
+      const range = selection.getRangeAt(0);
+      range.deleteContents();
+
+      // Create text node that will inherit parent's font styling
+      const textNode = document.createTextNode(text);
+      range.insertNode(textNode);
+
+      // Move cursor after inserted text
+      range.setStartAfter(textNode);
+      range.collapse(true);
+      selection.removeAllRanges();
+      selection.addRange(range);
+    });
+
+    // Improve cursor placement on click
+    cvContent.addEventListener('click', (e) => {
+      if (isEditing) {
+        // Ensure focus is set immediately for text selection to work properly
+        cvContent.focus();
+      }
+    });
+
+    // Prevent default keydown interference with text selection
+    cvContent.addEventListener('keydown', (e) => {
+      // Allow all default behaviors in contentEditable: Shift+arrow, Ctrl+A, etc.
+      // No preventDefault() here — let contentEditable handle selection natively
+    }, false);
 
     exportBtn.addEventListener('click', async () => {
       exportBtn.disabled = true;
@@ -2921,7 +2978,7 @@ function buildEditorTemplate(content, id, reportMd = null, cvStyles = '') {
         // Exit editing mode
         if (isEditing) {
           isEditing = false;
-          cvContent.contentEditable = false;
+          cvContent.removeAttribute('contenteditable');
           editBtn.textContent = '✏️ Edit';
           editBtn.classList.remove('active');
           cvContent.classList.remove('editing');

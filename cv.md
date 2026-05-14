@@ -5,12 +5,12 @@ LinkedIn: linkedin.com/in/park-lewis-b2ba7228/
 
 ## Professional Summary
 
-Dubai-based fintech operations and product leader building reliable systems from MVP through production. I've led cross-functional teams across engineering, compliance, and operations in regulated environments. I moved to Dubai for long-term impact and am available immediately.
+Dubai-based fintech operations and product leader building player account ecosystems and reliable platforms from MVP through production. I've led cross-functional teams across engineering, compliance, and operations in regulated environments, designing platform infrastructure that scales. I moved to Dubai for long-term impact and am available immediately.
 
 ## Core Strengths
 
 - 0-to-1 product launch and MVP delivery in fintech and blockchain environments
-- Technical architecture collaboration: designing payment flows, wallet infrastructure, and transaction monitoring systems
+- Technical architecture collaboration: designing player account systems, payment flows, wallet infrastructure, and transaction monitoring systems
 - Cross-functional product leadership across engineering, compliance, operations, and customer support
 - High-volume crypto payment operations and wallet infrastructure in regulated iGaming
 - KYC/AML, KYT, fraud monitoring, and compliance workflow design
@@ -20,12 +20,12 @@ Dubai-based fintech operations and product leader building reliable systems from
 
 **GGPoker | Seoul | Oct 2022 - Jul 2024**
 
-Crypto Payments & Operations
+Crypto Payments & Operations — Player Ecosystem at Scale
 
-- Managed $20M+/month in payments across 6 regulated brands with 99.9% uptime—handled deposit/withdrawal flows and settlement processes
+- Managed $20M+/month in payments across 6 regulated brands with 99.9% uptime—owned complete player payment lifecycle from deposit/withdrawal flows through settlement processes
 - Optimized payment routing—coordinated with multiple payment providers to maximize success rates and reduce customer friction
 - Built compliance systems using KYC and KYT—automated identity verification and transaction monitoring for 24/7 operations with zero breaches
-- Designed crypto wallet infrastructure with BitGo—managed custody and security across Tron, BSC, and Ethereum
+- Designed unified player wallet ecosystem with BitGo—managed multi-chain custody and security (Tron, BSC, Ethereum) enabling frictionless player onboarding
 - Resolved payment incidents rapidly—coordinated cross-team troubleshooting with treasury, payment partners, and engineering
 - Reduced payment costs by $1M+ annually—negotiated fees, automated processes, and optimized infrastructure; scaled crypto volume from $0 to $2M/month
 - Implemented fraud detection systems—designed monitoring rules to catch suspicious patterns and regulatory edge cases
@@ -33,7 +33,7 @@ Crypto Payments & Operations
 **ACTUALAB | Product & Platform Design | Aug 2024 - Current**
 
 Seoul, Korea (Aug 2024 - Dec 2025)
-- Built consumer crypto product MVP—designed platform architecture, game mechanics, player onboarding, and rewards system
+- Architected player lifecycle and account management system from zero—designed platform architecture, user authentication, player onboarding flows, and account profiles
 
 Dubai, UAE (Jan 2026 - Current)
 - Architected A Pay multi-chain stablecoin settlement infrastructure for UAE regulated stablecoin settlement rail—dual custody models, KYC/KYT integration, and regulatory compliance
@@ -42,7 +42,7 @@ Dubai, UAE (Jan 2026 - Current)
 
 Head of Gaming Strategy & Operations
 
-- Designed and implemented company-wide BI system enabling real-time alignment across teams on game performance, revenue metrics, KPIs, and player behavior analytics
+- Designed and implemented company-wide BI system enabling real-time alignment across teams on player behavior analytics, game performance, revenue metrics, KPIs, and player-centric decision-making
 - Built performance dashboards and data pipelines supporting cross-functional decision-making on monetization, retention, and operations optimization
 
 ## Selected Proof Points
